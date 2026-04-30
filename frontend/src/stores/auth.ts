@@ -8,9 +8,9 @@ export interface SessionUser {
   avatar_url: string
 }
 
-const ACCESS_KEY = 'smm.access'
-const REFRESH_KEY = 'smm.refresh'
-const USER_KEY = 'smm.user'
+const ACCESS_KEY = 'helix.access'
+const REFRESH_KEY = 'helix.refresh'
+const USER_KEY = 'helix.user'
 
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(localStorage.getItem(ACCESS_KEY))

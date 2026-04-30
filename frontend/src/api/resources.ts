@@ -1,4 +1,4 @@
-import { api } from './client'
+import { api, unwrapList } from './client'
 
 // ----------------------------- Types -----------------------------
 
@@ -97,21 +97,23 @@ export interface AgentRun {
 
 // ----------------------------- Endpoints -----------------------------
 
+type Paginated<T> = T[] | { results: T[] }
+
 export const workspacesApi = {
-  list: () => api.get<Workspace[]>('/workspaces/').then((r) => r.data),
+  list: () => api.get<Paginated<Workspace>>('/workspaces/').then((r) => unwrapList(r.data)),
   create: (data: { name: string }) =>
     api.post<Workspace>('/workspaces/', data).then((r) => r.data),
 }
 
 export const brandsApi = {
-  list: () => api.get<Brand[]>('/brands/').then((r) => r.data),
+  list: () => api.get<Paginated<Brand>>('/brands/').then((r) => unwrapList(r.data)),
   create: (data: Partial<Brand>) => api.post<Brand>('/brands/', data).then((r) => r.data),
   update: (id: string, data: Partial<Brand>) =>
     api.patch<Brand>(`/brands/${id}/`, data).then((r) => r.data),
 }
 
 export const postsApi = {
-  list: () => api.get<Post[]>('/content/posts/').then((r) => r.data),
+  list: () => api.get<Paginated<Post>>('/content/posts/').then((r) => unwrapList(r.data)),
   create: (data: Partial<Post>) =>
     api.post<Post>('/content/posts/', data).then((r) => r.data),
   get: (id: string) => api.get<Post>(`/content/posts/${id}/`).then((r) => r.data),
@@ -137,7 +139,9 @@ export const brandsCurateApi = {
 
 export const referencesApi = {
   list: (params?: { platform?: Platform; brand?: string }) =>
-    api.get<Reference[]>('/content/references/', { params }).then((r) => r.data),
+    api
+      .get<Paginated<Reference>>('/content/references/', { params })
+      .then((r) => unwrapList(r.data)),
   create: (data: Partial<Reference>) =>
     api.post<Reference>('/content/references/', data).then((r) => r.data),
   remove: (id: string) => api.delete(`/content/references/${id}/`),
@@ -145,7 +149,9 @@ export const referencesApi = {
 
 export const styleRulesApi = {
   list: (params?: { status?: string; brand?: string }) =>
-    api.get<StyleRule[]>('/content/style-rules/', { params }).then((r) => r.data),
+    api
+      .get<Paginated<StyleRule>>('/content/style-rules/', { params })
+      .then((r) => unwrapList(r.data)),
   approve: (id: string) =>
     api.post<StyleRule>(`/content/style-rules/${id}/approve/`).then((r) => r.data),
   reject: (id: string) =>

@@ -13,6 +13,19 @@ export const api: AxiosInstance = axios.create({
   },
 })
 
+/**
+ * Unwrap a DRF-paginated response of the shape `{count, results: T[]}` to
+ * a flat array. Pass-through for already-flat responses.
+ */
+export function unwrapList<T>(data: T[] | { results: T[] } | undefined | null): T[] {
+  if (!data) return []
+  if (Array.isArray(data)) return data
+  if (typeof data === 'object' && Array.isArray((data as { results?: T[] }).results)) {
+    return (data as { results: T[] }).results
+  }
+  return []
+}
+
 api.interceptors.request.use((config) => {
   const auth = useAuthStore()
   if (auth.accessToken) {

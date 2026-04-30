@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 
 import { workspacesApi, type Workspace } from '@/api/resources'
 
-const ACTIVE_KEY = 'smm.active_workspace'
+const ACTIVE_KEY = 'helix.active_workspace'
 
 export const useWorkspaceStore = defineStore('workspace', () => {
   const workspaces = ref<Workspace[]>([])
