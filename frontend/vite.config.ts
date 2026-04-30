@@ -4,6 +4,9 @@ import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
+  // Read .env from the repo root so VITE_API_URL / VITE_WS_URL are picked up
+  // alongside the Django/agent service env vars.
+  envDir: '..',
   plugins: [vue()],
   resolve: {
     alias: {

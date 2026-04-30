@@ -14,6 +14,25 @@ import {
 import { useAuthStore } from './auth'
 import { useWorkspaceStore } from './workspace'
 
+/**
+ * Build a base URL for WebSocket, with this priority:
+ *   1. VITE_WS_URL (explicit override)
+ *   2. VITE_API_URL with http→ws / https→wss
+ *   3. Same-origin (relies on Vite dev proxy for /ws)
+ */
+function resolveWsBase(): string {
+  const explicit = import.meta.env.VITE_WS_URL as string | undefined
+  if (explicit) return explicit.replace(/\/$/, '')
+
+  const api = import.meta.env.VITE_API_URL as string | undefined
+  if (api) {
+    return api.replace(/^http(s?):/, (_, s) => `ws${s}:`).replace(/\/$/, '')
+  }
+
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}`
+}
+
 export interface AgentEvent {
   sequence: number
   kind: string
@@ -75,10 +94,7 @@ export const useComposerStore = defineStore('composer', () => {
     events.value = []
 
     const auth = useAuthStore()
-    const wsBase =
-      import.meta.env.VITE_WS_URL ||
-      (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host
-
+    const wsBase = resolveWsBase()
     const url = `${wsBase}/ws/agent-runs/${runId}/`
     socket = new WebSocket(url)
 
