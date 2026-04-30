@@ -11,6 +11,7 @@ import {
 } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
 
+import VariantImage from '@/components/composer/VariantImage.vue'
 import type { Platform } from '@/api/resources'
 import { useComposerStore } from '@/stores/composer'
 
@@ -208,6 +209,7 @@ async function toggleStar(variantId: string, isStarred: boolean) {
             </button>
           </header>
           <p class="whitespace-pre-wrap text-sm leading-relaxed">{{ variant.content }}</p>
+          <VariantImage :variant="variant" />
           <footer class="mt-3 flex items-center justify-between text-xs text-muted-foreground">
             <span>
               {{ variant.content.length }} / {{ charLimit[activePlatform] }} chars

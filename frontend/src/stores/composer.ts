@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 
 import {
   brandsApi,
+  mediaApi,
   postsApi,
   variantsApi,
   type Brand,
@@ -204,6 +205,31 @@ export const useComposerStore = defineStore('composer', () => {
     }
   }
 
+  function _replaceVariant(updated: PostVariant) {
+    if (!currentPost.value) return
+    currentPost.value = {
+      ...currentPost.value,
+      variants: currentPost.value.variants.map((v) => (v.id === updated.id ? updated : v)),
+    }
+  }
+
+  async function uploadAndAttach(variantId: string, file: File) {
+    const brand = (await ensureBrand())?.id
+    const asset = await mediaApi.upload(file, brand, '')
+    const { variant: updated } = await variantsApi.attachImage(variantId, asset.id)
+    _replaceVariant(updated)
+  }
+
+  async function generateImage(variantId: string) {
+    const { variant: updated } = await variantsApi.generateImage(variantId)
+    _replaceVariant(updated)
+  }
+
+  async function detachImage(variantId: string) {
+    const updated = await variantsApi.detachImage(variantId)
+    _replaceVariant(updated)
+  }
+
   return {
     brands,
     activeBrandId,
@@ -218,6 +244,9 @@ export const useComposerStore = defineStore('composer', () => {
     runBrief,
     starVariant,
     unstarVariant,
+    uploadAndAttach,
+    generateImage,
+    detachImage,
     refreshCurrentPost,
     closeStream,
   }

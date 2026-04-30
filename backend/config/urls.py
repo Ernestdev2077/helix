@@ -20,6 +20,7 @@ api_patterns = [
     path("workspaces/", include("apps.workspaces.urls")),
     path("brands/", include("apps.brands.urls")),
     path("content/", include("apps.content.urls")),
+    path("media/", include("apps.media.urls")),
     path("publishing/", include("apps.publishing.urls")),
     path("analytics/", include("apps.analytics.urls")),
     path("agent-runs/", include("apps.agent_runs.urls")),
@@ -34,6 +35,10 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:
+    from django.conf.urls.static import static
+
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
     try:
         import debug_toolbar
 

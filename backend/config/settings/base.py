@@ -79,6 +79,7 @@ LOCAL_APPS = [
     "apps.workspaces",
     "apps.brands",
     "apps.content",
+    "apps.media",
     "apps.publishing",
     "apps.analytics",
     "apps.agent_runs",

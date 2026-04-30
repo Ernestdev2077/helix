@@ -117,6 +117,100 @@ class PostVariantViewSet(viewsets.ModelViewSet):
         variant.save(update_fields=["is_starred", "updated_at"])
         return Response(PostVariantSerializer(variant).data)
 
+    @action(detail=True, methods=["post"], url_path="attach-image")
+    def attach_image(self, request, id=None):  # noqa: A002,ARG002
+        """Attach an existing MediaAsset (uploaded earlier) to this variant."""
+        from apps.media.models import MediaAsset
+        from apps.media.serializers import MediaAssetSerializer
+
+        variant = self.get_object()
+        asset_id = request.data.get("asset_id")
+        if not asset_id:
+            return Response({"error": "asset_id required"}, status=400)
+        try:
+            asset = MediaAsset.objects.get(id=asset_id, workspace=variant.post.workspace)
+        except MediaAsset.DoesNotExist:
+            return Response({"error": "asset not found"}, status=404)
+
+        asset_url = (
+            request.build_absolute_uri(asset.url)
+            if asset.file and not asset.url.startswith(("http://", "https://"))
+            else asset.url
+        )
+        media_entry = {
+            "asset_id": str(asset.id),
+            "type": "image",
+            "url": asset_url,
+            "alt": asset.alt_text,
+            "width": asset.width,
+            "height": asset.height,
+            "source": asset.source,
+        }
+        variant.media = [media_entry]
+        variant.save(update_fields=["media", "updated_at"])
+        return Response({
+            "variant": PostVariantSerializer(variant).data,
+            "asset": MediaAssetSerializer(asset, context={"request": request}).data,
+        })
+
+    @action(detail=True, methods=["post"], url_path="detach-image")
+    def detach_image(self, request, id=None):  # noqa: A002,ARG002
+        variant = self.get_object()
+        variant.media = []
+        variant.save(update_fields=["media", "updated_at"])
+        return Response(PostVariantSerializer(variant).data)
+
+    @action(detail=True, methods=["post"], url_path="generate-image")
+    def generate_image(self, request, id=None):  # noqa: A002,ARG002
+        """AI-generate an image for this variant via DALL-E 3 (OpenAI direct)."""
+        from apps.media.serializers import MediaAssetSerializer
+        from apps.media.services import (
+            ImageGenerationError,
+            generate_image_for_variant,
+            has_openai_key,
+        )
+
+        variant = self.get_object()
+        if not has_openai_key():
+            return Response(
+                {
+                    "error": "openai_key_missing",
+                    "message": (
+                        "OPENAI_API_KEY is not configured. Add it to .env to enable AI image "
+                        "generation. OpenRouter does not proxy DALL-E currently."
+                    ),
+                },
+                status=503,
+            )
+
+        try:
+            asset = generate_image_for_variant(
+                variant=variant,
+                brand=variant.post.brand,
+                workspace=variant.post.workspace,
+                user=request.user,
+            )
+        except ImageGenerationError as exc:
+            return Response({"error": "generation_failed", "message": str(exc)}, status=502)
+
+        # Attach to variant
+        asset_url = request.build_absolute_uri(asset.url) if not asset.url.startswith(("http://", "https://")) else asset.url
+        variant.media = [{
+            "asset_id": str(asset.id),
+            "type": "image",
+            "url": asset_url,
+            "alt": asset.alt_text,
+            "width": asset.width,
+            "height": asset.height,
+            "source": "ai",
+        }]
+        variant.save(update_fields=["media", "updated_at"])
+
+        return Response({
+            "variant": PostVariantSerializer(variant).data,
+            "asset": MediaAssetSerializer(asset, context={"request": request}).data,
+        })
+
 
 class ReferenceViewSet(_WorkspaceScopedViewSet):
     queryset = Reference.objects.all()

@@ -26,17 +26,42 @@ export interface Brand {
   accent_color: string
 }
 
+export interface VariantMedia {
+  asset_id: string
+  type: 'image' | 'video' | 'gif'
+  url: string
+  alt: string
+  width?: number
+  height?: number
+  source?: 'upload' | 'ai' | 'url'
+}
+
 export interface PostVariant {
   id: string
   post: string
   platform: Platform
   label: string
   content: string
-  media: unknown[]
+  media: VariantMedia[]
   status: string
   is_starred: boolean
   critic_notes: { severity: string; message: string; fix_suggestion?: string }[]
   allocation_weight: number
+  created_at: string
+}
+
+export interface MediaAsset {
+  id: string
+  url: string
+  source: 'upload' | 'ai' | 'url'
+  mime_type: string
+  width: number
+  height: number
+  size_bytes: number
+  alt_text: string
+  ai_prompt: string
+  ai_model: string
+  cost_usd: string | number
   created_at: string
 }
 
@@ -128,6 +153,35 @@ export const variantsApi = {
     api.post<PostVariant>(`/content/variants/${id}/star/`).then((r) => r.data),
   unstar: (id: string) =>
     api.post<PostVariant>(`/content/variants/${id}/unstar/`).then((r) => r.data),
+  attachImage: (id: string, assetId: string) =>
+    api
+      .post<{ variant: PostVariant; asset: MediaAsset }>(
+        `/content/variants/${id}/attach-image/`,
+        { asset_id: assetId },
+      )
+      .then((r) => r.data),
+  detachImage: (id: string) =>
+    api.post<PostVariant>(`/content/variants/${id}/detach-image/`).then((r) => r.data),
+  generateImage: (id: string) =>
+    api
+      .post<{ variant: PostVariant; asset: MediaAsset }>(
+        `/content/variants/${id}/generate-image/`,
+      )
+      .then((r) => r.data),
+}
+
+export const mediaApi = {
+  upload: (file: File, brandId?: string, altText?: string) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    if (brandId) fd.append('brand', brandId)
+    if (altText) fd.append('alt_text', altText)
+    return api
+      .post<MediaAsset>('/media/upload/', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => r.data)
+  },
 }
 
 export const brandsCurateApi = {
