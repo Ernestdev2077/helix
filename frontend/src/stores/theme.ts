@@ -36,10 +36,11 @@ export const useThemeStore = defineStore('theme', () => {
   }
 
   function toggle() {
-    // Cycle: system → dark → light → system
-    const next: ThemeMode =
-      mode.value === 'system' ? 'dark' : mode.value === 'dark' ? 'light' : 'system'
-    set(next)
+    // Two-state toggle in the topbar: always flip the *visible* theme.
+    // If currently in 'system', commit to the opposite of what's effective so
+    // every click produces a visible change (system stays available in Settings).
+    const current = effective.value
+    set(current === 'dark' ? 'light' : 'dark')
   }
 
   // React to OS-level changes when in 'system' mode
