@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -12,6 +12,22 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
+    <!--
+      Pre-paint theme: applies `.light` BEFORE the bundle loads to avoid FOUC.
+      Saved value: 'system' | 'dark' | 'light' (default 'system').
+    -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('helix.theme') || 'system'
+          var prefersLight =
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: light)').matches
+          var useLight = saved === 'light' || (saved === 'system' && prefersLight)
+          if (useLight) document.documentElement.classList.add('light')
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body class="bg-background text-foreground antialiased">
     <div id="app"></div>

@@ -3,12 +3,14 @@
 @tailwind utilities;
 
 /*
-  Theme tokens. We target dark mode by default (matches Cursor/Linear).
-  Colors use HSL triplets without the hsl() wrapper so Tailwind can append
-  the alpha channel via <alpha-value>.
+  Theme tokens.
+  Default is DARK (matches Cursor/Linear). Toggle via `.light` class on <html>.
+  Colors are HSL triplets without the hsl() wrapper so Tailwind can append the
+  alpha channel via <alpha-value>.
 */
 @layer base {
   :root {
+    /* Dark theme (default) */
     --color-background: 240 9% 5%;
     --color-foreground: 240 6% 94%;
     --color-muted: 240 6% 10%;
@@ -30,23 +32,44 @@
     --color-x: 0 0% 100%;
     --color-reddit: 16 100% 56%;
     --color-linkedin: 201 100% 45%;
+
+    color-scheme: dark;
   }
 
   :root.light {
+    /* Light theme — soft, dev-tool flavored, not pure white */
     --color-background: 0 0% 100%;
-    --color-foreground: 240 10% 4%;
-    --color-muted: 240 5% 96%;
-    --color-muted-foreground: 240 4% 46%;
+    --color-foreground: 240 10% 8%;
+    --color-muted: 240 6% 96%;
+    --color-muted-foreground: 240 4% 42%;
     --color-card: 0 0% 100%;
-    --color-card-foreground: 240 10% 4%;
+    --color-card-foreground: 240 10% 8%;
     --color-border: 240 6% 90%;
-    --color-input: 240 6% 94%;
+    --color-input: 240 6% 96%;
+    --color-ring: 263 70% 56%;
+    --color-primary: 263 70% 56%;
+    --color-primary-foreground: 0 0% 100%;
+    --color-accent: 263 70% 56%;
+    --color-accent-foreground: 0 0% 100%;
+    --color-destructive: 0 72% 50%;
+    --color-destructive-foreground: 0 0% 100%;
+    --color-success: 142 60% 38%;
+    --color-warn: 32 95% 44%;
+
+    --color-x: 0 0% 8%;
+    --color-reddit: 16 100% 48%;
+    --color-linkedin: 201 100% 40%;
+
+    color-scheme: light;
   }
 
   html,
   body {
     min-height: 100vh;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    transition:
+      background-color 200ms ease,
+      color 200ms ease;
   }
 
   * {
@@ -68,7 +91,7 @@
     background: hsl(var(--color-primary) / 0.3);
   }
 
-  /* Scrollbars — subtle, dark-mode-friendly */
+  /* Scrollbars — subtle, theme-aware */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;

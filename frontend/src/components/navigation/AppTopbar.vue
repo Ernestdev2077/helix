@@ -2,6 +2,7 @@
 import { ChevronsUpDown, Plus, Search } from 'lucide-vue-next'
 import { computed } from 'vue'
 
+import ThemeToggle from '@/components/navigation/ThemeToggle.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -38,6 +39,7 @@ const initial = computed(() =>
     </button>
 
     <div class="flex items-center gap-2">
+      <ThemeToggle />
       <button
         class="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground shadow-sm transition-all hover:brightness-110 active:scale-[0.98]"
       >
