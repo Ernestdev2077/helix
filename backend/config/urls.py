@@ -1,0 +1,42 @@
+"""Root URL configuration."""
+
+from __future__ import annotations
+
+from django.conf import settings
+from django.contrib import admin
+from django.http import JsonResponse
+from django.urls import include, path
+
+
+def health(_request):
+    """Liveness probe — not auth-gated."""
+    return JsonResponse({"status": "ok", "service": "helix-backend"})
+
+
+api_patterns = [
+    path("auth/", include("dj_rest_auth.urls")),
+    path("auth/registration/", include("dj_rest_auth.registration.urls")),
+    path("auth/social/", include("allauth.socialaccount.urls")),
+    path("workspaces/", include("apps.workspaces.urls")),
+    path("brands/", include("apps.brands.urls")),
+    path("content/", include("apps.content.urls")),
+    path("publishing/", include("apps.publishing.urls")),
+    path("analytics/", include("apps.analytics.urls")),
+    path("agent-runs/", include("apps.agent_runs.urls")),
+    path("billing/", include("apps.billing.urls")),
+]
+
+urlpatterns = [
+    path("health/", health, name="health"),
+    path("admin/", admin.site.urls),
+    path("accounts/", include("allauth.urls")),
+    path("api/v1/", include((api_patterns, "api"), namespace="api")),
+]
+
+if settings.DEBUG:
+    try:
+        import debug_toolbar
+
+        urlpatterns = [path("__debug__/", include(debug_toolbar.urls)), *urlpatterns]
+    except ImportError:
+        pass

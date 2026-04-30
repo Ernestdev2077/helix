@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Theme tokens. We target dark mode by default (matches Cursor/Linear).
+  Colors use HSL triplets without the hsl() wrapper so Tailwind can append
+  the alpha channel via <alpha-value>.
+*/
+@layer base {
+  :root {
+    --color-background: 240 9% 5%;
+    --color-foreground: 240 6% 94%;
+    --color-muted: 240 6% 10%;
+    --color-muted-foreground: 240 5% 64%;
+    --color-card: 240 8% 7%;
+    --color-card-foreground: 240 6% 94%;
+    --color-border: 240 6% 15%;
+    --color-input: 240 6% 12%;
+    --color-ring: 263 82% 66%;
+    --color-primary: 263 82% 66%;
+    --color-primary-foreground: 240 6% 98%;
+    --color-accent: 263 82% 66%;
+    --color-accent-foreground: 240 6% 98%;
+    --color-destructive: 0 72% 58%;
+    --color-destructive-foreground: 240 6% 98%;
+    --color-success: 142 72% 50%;
+    --color-warn: 38 92% 58%;
+
+    --color-x: 0 0% 100%;
+    --color-reddit: 16 100% 56%;
+    --color-linkedin: 201 100% 45%;
+  }
+
+  :root.light {
+    --color-background: 0 0% 100%;
+    --color-foreground: 240 10% 4%;
+    --color-muted: 240 5% 96%;
+    --color-muted-foreground: 240 4% 46%;
+    --color-card: 0 0% 100%;
+    --color-card-foreground: 240 10% 4%;
+    --color-border: 240 6% 90%;
+    --color-input: 240 6% 94%;
+  }
+
+  html,
+  body {
+    min-height: 100vh;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  * {
+    border-color: hsl(var(--color-border));
+  }
+
+  /* Respect reduced motion — disable non-essential animations */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  ::selection {
+    background: hsl(var(--color-primary) / 0.3);
+  }
+
+  /* Scrollbars — subtle, dark-mode-friendly */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border));
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-muted-foreground));
+  }
+}
+
+@layer components {
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--color-muted)) 0%,
+      hsl(var(--color-border)) 50%,
+      hsl(var(--color-muted)) 100%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer;
+  }
+
+  .kbd {
+    @apply inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1.5 text-[10px] font-medium text-muted-foreground;
+  }
+}

@@ -1,0 +1,65 @@
+[project]
+name = "helix-backend"
+version = "0.1.0"
+description = "helix — Django backend (API, workspaces, publishing, analytics)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["migrations", "manage.py"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "N",   # pep8-naming
+    "DJ",  # flake8-django
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RUF",
+]
+ignore = [
+    "E501", # line too long — handled by formatter
+    "B008", # function call in default argument (DRF/FastAPI style)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/migrations/*" = ["E", "F", "N"]
+"**/settings/*.py" = ["F401", "F403", "F405"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py", "*_test.py", "tests.py"]
+addopts = "--reuse-db --tb=short -ra"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["apps", "config"]
+omit = [
+    "*/migrations/*",
+    "*/tests/*",
+    "*/settings/*",
+    "manage.py",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+ignore_missing_imports = true
+plugins = ["mypy_django_plugin.main"]
+
+[tool.django-stubs]
+django_settings_module = "config.settings.dev"

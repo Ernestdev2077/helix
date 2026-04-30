@@ -1,0 +1,18 @@
+[project]
+name = "helix-agents"
+version = "0.1.0"
+description = "helix — LangGraph-based content, curation and analysis agents"
+readme = "README.md"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "N", "C4", "SIM", "RUF"]
+ignore = ["E501", "B008"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+python_files = ["test_*.py", "*_test.py"]
