@@ -19,11 +19,20 @@ const initial = computed(() =>
     class="flex items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-sm"
   >
     <div class="flex items-center gap-3">
+      <router-link
+        to="/composer"
+        class="group flex items-center gap-1.5 rounded-md px-1.5 py-1 transition-colors hover:bg-muted"
+        title="helix"
+      >
+        <span class="text-base leading-none">🧬</span>
+        <span class="text-sm font-semibold tracking-tight text-foreground">helix</span>
+      </router-link>
+      <span class="text-muted-foreground/40">/</span>
       <button
         class="inline-flex items-center gap-2 rounded-md px-2.5 py-1 text-sm font-medium hover:bg-muted"
       >
         <span class="flex h-6 w-6 items-center justify-center rounded bg-primary text-[11px] font-semibold text-primary-foreground">
-          {{ workspaces.activeWorkspace?.name?.slice(0, 2).toUpperCase() || 'SM' }}
+          {{ workspaces.activeWorkspace?.name?.slice(0, 2).toUpperCase() || '??' }}
         </span>
         <span class="text-foreground">{{ workspaces.activeWorkspace?.name || 'No workspace' }}</span>
         <ChevronsUpDown :size="14" class="text-muted-foreground" />
