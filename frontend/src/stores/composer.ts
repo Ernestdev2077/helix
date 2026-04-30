@@ -95,13 +95,13 @@ export const useComposerStore = defineStore('composer', () => {
 
     const auth = useAuthStore()
     const wsBase = resolveWsBase()
-    const url = `${wsBase}/ws/agent-runs/${runId}/`
+    // JWT in query string — browser WebSocket can't set Authorization header
+    const tokenParam = auth.accessToken ? `?token=${encodeURIComponent(auth.accessToken)}` : ''
+    const url = `${wsBase}/ws/agent-runs/${runId}/${tokenParam}`
     socket = new WebSocket(url)
 
     socket.onopen = () => {
-      if (auth.accessToken) {
-        socket?.send(JSON.stringify({ type: 'auth', token: auth.accessToken }))
-      }
+      // server already authed us via the query param — nothing to send here
     }
 
     socket.onmessage = (ev) => {

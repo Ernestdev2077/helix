@@ -14,12 +14,17 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.dev")
 django_asgi_app = get_asgi_application()
 
 from apps.agent_runs.routing import websocket_urlpatterns  # noqa: E402
+from apps.agent_runs.ws_auth import JWTAuthMiddlewareStack  # noqa: E402
 
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
+        # JWT first (reads ?token= from query string), then session fallback,
+        # then origin validation for safety.
         "websocket": AllowedHostsOriginValidator(
-            AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
+            JWTAuthMiddlewareStack(
+                AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
+            )
         ),
     }
 )
