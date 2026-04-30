@@ -23,6 +23,7 @@ class ContentState(TypedDict, total=False):
     run_id: str
     workspace_id: str
     brand_id: str
+    post_id: str
 
     brief: str
     goals: list[str]

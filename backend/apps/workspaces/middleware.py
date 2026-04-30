@@ -34,6 +34,11 @@ class WorkspaceContextMiddleware:
 
         user = getattr(request, "user", None)
         if user is None or not user.is_authenticated:
+            user = self._resolve_jwt_user(request)
+            if user is not None:
+                request.user = user  # type: ignore[assignment]
+
+        if user is None or not user.is_authenticated:
             return self.get_response(request)
 
         identifier = request.headers.get("X-Workspace") or request.GET.get("workspace")
@@ -61,3 +66,23 @@ class WorkspaceContextMiddleware:
             return qs.filter(workspace_id=uuid_val).first()
         except (ValueError, TypeError):
             return qs.filter(workspace__slug=identifier).first()
+
+    @staticmethod
+    def _resolve_jwt_user(request: HttpRequest):
+        """Decode the JWT manually so middleware can resolve workspace.
+
+        DRF's JWTAuthentication runs at the view layer, after middleware.
+        We invoke it here so the workspace context is available throughout.
+        """
+        try:
+            from rest_framework_simplejwt.authentication import JWTAuthentication
+        except ImportError:
+            return None
+        try:
+            result = JWTAuthentication().authenticate(request)
+        except Exception:  # noqa: BLE001
+            return None
+        if result is None:
+            return None
+        user, _token = result
+        return user

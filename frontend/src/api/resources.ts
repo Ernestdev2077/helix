@@ -121,6 +121,20 @@ export const postsApi = {
     ),
 }
 
+export const variantsApi = {
+  star: (id: string) =>
+    api.post<PostVariant>(`/content/variants/${id}/star/`).then((r) => r.data),
+  unstar: (id: string) =>
+    api.post<PostVariant>(`/content/variants/${id}/unstar/`).then((r) => r.data),
+}
+
+export const brandsCurateApi = {
+  curate: (brandId: string) =>
+    api.post<{ agent_run_id: string; brand_id: string }>(`/brands/${brandId}/curate/`).then(
+      (r) => r.data,
+    ),
+}
+
 export const referencesApi = {
   list: (params?: { platform?: Platform; brand?: string }) =>
     api.get<Reference[]>('/content/references/', { params }).then((r) => r.data),

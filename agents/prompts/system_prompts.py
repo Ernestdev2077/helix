@@ -58,12 +58,21 @@ def _format_rules(rules: list[dict[str, Any]]) -> str:
     return "\n".join(f"- {r.get('rule_text', '')}" for r in rules)
 
 
+VARIANT_DIRECTIONS = {
+    "A": "Take the most direct, on-brand interpretation of the brief.",
+    "B": "Take a notably DIFFERENT angle — different opening, different hook style, different rhythm. This is the A/B test counterpart to variant A, so contrast matters.",
+    "C": "Take a third angle — try a story-format or contrarian take.",
+    "D": "Take a fourth angle — try a thread/list format if the platform supports it.",
+}
+
+
 def writer_prompt(
     *,
     platform: Platform,
     kb_context: str = "",
     references: list[dict[str, Any]] | None = None,
     style_rules: list[dict[str, Any]] | None = None,
+    variant_label: str = "A",
 ) -> str:
     references = references or []
     style_rules = style_rules or []
@@ -72,6 +81,7 @@ def writer_prompt(
     kb_block = kb_context.strip() or "(no brand knowledge base context retrieved)"
     refs_block = _format_references(references)
     style_block = _format_rules(style_rules)
+    variant_direction = VARIANT_DIRECTIONS.get(variant_label, VARIANT_DIRECTIONS["A"])
 
     return f"""You are a senior social media strategist writing for a SaaS product.
 
@@ -86,8 +96,12 @@ LEARNED STYLE RULES (approved by the team based on past wins):
 REFERENCES (posts that performed well for similar briefs):
 {refs_block}
 
+VARIANT DIRECTION (you are writing variant "{variant_label}"):
+{variant_direction}
+
 OUTPUT FORMAT:
-Return only the post content. No preamble, no markdown fences, no meta-commentary."""
+Return only the post content. No preamble, no markdown fences, no meta-commentary, no explanations.
+Do not output the platform name or the variant label."""
 
 
 def writer_user_prompt(

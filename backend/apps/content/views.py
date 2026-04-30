@@ -86,6 +86,37 @@ class PostVariantViewSet(viewsets.ModelViewSet):
             return PostVariant.objects.none()
         return PostVariant.objects.filter(post__workspace=workspace)
 
+    @action(detail=True, methods=["post"])
+    def star(self, request, id=None):  # noqa: A002,ARG002
+        """Mark variant as the A/B winner and auto-create a Reference for the learning loop."""
+        variant = self.get_object()
+        post = variant.post
+
+        PostVariant.objects.filter(post=post, platform=variant.platform).update(is_starred=False)
+        variant.is_starred = True
+        variant.save(update_fields=["is_starred", "updated_at"])
+
+        Reference.objects.update_or_create(
+            workspace=post.workspace,
+            brand=post.brand,
+            platform=variant.platform,
+            raw_text=variant.content,
+            defaults={
+                "source": Reference.Source.WINNER,
+                "source_url": "",
+                "tags": ["winner", post.brand.slug or "brand"],
+                "added_by": request.user,
+            },
+        )
+        return Response(PostVariantSerializer(variant).data)
+
+    @action(detail=True, methods=["post"])
+    def unstar(self, request, id=None):  # noqa: A002,ARG002
+        variant = self.get_object()
+        variant.is_starred = False
+        variant.save(update_fields=["is_starred", "updated_at"])
+        return Response(PostVariantSerializer(variant).data)
+
 
 class ReferenceViewSet(_WorkspaceScopedViewSet):
     queryset = Reference.objects.all()

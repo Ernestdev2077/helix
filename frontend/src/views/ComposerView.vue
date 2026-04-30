@@ -1,27 +1,34 @@
 <script setup lang="ts">
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
-import { Linkedin, Play, Save, Send, Sparkles, Star, Twitter } from 'lucide-vue-next'
-import { computed, ref } from 'vue'
+import {
+  Linkedin,
+  MessageSquare,
+  Play,
+  Send,
+  Sparkles,
+  Star,
+  Twitter,
+} from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
 
 import type { Platform } from '@/api/resources'
+import { useComposerStore } from '@/stores/composer'
+
+const composer = useComposerStore()
 
 const brief = ref('')
 const selectedPlatforms = ref<Platform[]>(['x', 'reddit', 'linkedin'])
 const activePlatform = ref<Platform>('x')
 const goals = ref<string[]>(['signups'])
-const generating = ref(false)
 
-const variants = ref<Record<Platform, { label: string; content: string; starred: boolean }[]>>({
-  x: [],
-  reddit: [],
-  linkedin: [],
-})
-
-const platformIcon = { x: Twitter, reddit: Sparkles, linkedin: Linkedin } as const
-
+const platformIcon = { x: Twitter, reddit: MessageSquare, linkedin: Linkedin } as const
 const charLimit: Record<Platform, number> = { x: 280, reddit: 10000, linkedin: 3000 }
 
-const activeVariants = computed(() => variants.value[activePlatform.value])
+const activeVariants = computed(() => composer.variantsByPlatform[activePlatform.value] ?? [])
+
+onMounted(() => {
+  void composer.loadBrands()
+})
 
 function togglePlatform(p: Platform) {
   if (selectedPlatforms.value.includes(p)) {
@@ -35,24 +42,20 @@ function addGoal(tag: string) {
   if (!goals.value.includes(tag)) goals.value.push(tag)
 }
 
-async function runGraph() {
-  if (!brief.value.trim()) return
-  generating.value = true
-  try {
-    // Placeholder — real call wires to postsApi.create + postsApi.generate
-    // and subscribes the AgentPanel via useAgentStream(runId).
-    await new Promise((r) => setTimeout(r, 700))
-    for (const p of selectedPlatforms.value) {
-      variants.value[p] = [
-        {
-          label: 'A',
-          content: `[${p} draft for: ${brief.value.slice(0, 80)}]`,
-          starred: false,
-        },
-      ]
-    }
-  } finally {
-    generating.value = false
+async function runBrief() {
+  if (!brief.value.trim() || composer.generating) return
+  await composer.runBrief({
+    brief: brief.value,
+    platforms: selectedPlatforms.value,
+    goals: goals.value,
+  })
+}
+
+async function toggleStar(variantId: string, isStarred: boolean) {
+  if (isStarred) {
+    await composer.unstarVariant(variantId)
+  } else {
+    await composer.starVariant(variantId)
   }
 }
 </script>
@@ -69,7 +72,8 @@ async function runGraph() {
         rows="3"
         placeholder="What are we posting about? e.g. Announcing feature X for indie devs, tone: ironic, no buzzwords"
         class="w-full resize-none rounded-md border border-border bg-input/40 p-3 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground/70 focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/30"
-        @keydown.meta.enter.prevent="runGraph"
+        :disabled="composer.generating"
+        @keydown.meta.enter.prevent="runBrief"
       />
       <div class="mt-3 flex flex-wrap items-center gap-2">
         <span class="text-xs text-muted-foreground">Platforms:</span>
@@ -105,16 +109,17 @@ async function runGraph() {
 
         <div class="ml-auto flex items-center gap-2">
           <button
-            :disabled="generating || !brief.trim()"
+            :disabled="composer.generating || !brief.trim()"
             class="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
-            @click="runGraph"
+            @click="runBrief"
           >
             <Play :size="12" />
-            {{ generating ? 'Running...' : 'Run' }}
+            {{ composer.generating ? 'Running...' : 'Run' }}
             <span class="kbd">⌘</span><span class="kbd">↵</span>
           </button>
         </div>
       </div>
+      <p v-if="composer.error" class="mt-2 text-xs text-destructive">{{ composer.error }}</p>
     </section>
 
     <!-- Platform tabs -->
@@ -135,7 +140,7 @@ async function runGraph() {
         <span
           class="inline-flex h-4 w-4 items-center justify-center rounded bg-muted text-[10px]"
         >
-          {{ variants[p].length }}
+          {{ composer.variantsByPlatform[p]?.length ?? 0 }}
         </span>
         <span
           v-if="activePlatform === p"
@@ -149,21 +154,30 @@ async function runGraph() {
       <div v-if="activeVariants.length === 0" class="mx-auto max-w-2xl text-center">
         <div
           class="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary"
+          :class="{ 'animate-pulse-ring': composer.generating }"
         >
           <Sparkles :size="22" />
         </div>
-        <h3 class="mt-4 text-base font-medium">No drafts yet</h3>
+        <h3 class="mt-4 text-base font-medium">
+          {{ composer.generating ? 'Agents are drafting…' : 'No drafts yet' }}
+        </h3>
         <p class="mt-1 text-sm text-muted-foreground">
-          Describe what you want to post, hit <span class="kbd">⌘</span><span class="kbd">↵</span>,
-          and the agents will draft across your selected platforms.
+          {{ composer.generating
+            ? 'Watch the timeline on the right — drafts will appear here as they complete.'
+            : 'Describe what you want to post, hit ⌘↵, and the agents will draft variants A and B for each platform.' }}
         </p>
       </div>
 
       <div v-else v-auto-animate class="mx-auto flex max-w-2xl flex-col gap-4">
         <article
           v-for="variant in activeVariants"
-          :key="variant.label"
-          class="group rounded-lg border border-border bg-card p-5 transition-all hover:border-primary/30"
+          :key="variant.id"
+          class="group rounded-lg border bg-card p-5 transition-all"
+          :class="
+            variant.is_starred
+              ? 'border-warn/60 ring-1 ring-warn/30'
+              : 'border-border hover:border-primary/30'
+          "
         >
           <header class="mb-3 flex items-center justify-between">
             <div class="flex items-center gap-2 text-xs">
@@ -171,13 +185,26 @@ async function runGraph() {
                 {{ variant.label }}
               </span>
               <span class="text-muted-foreground">variant</span>
+              <span
+                v-for="note in variant.critic_notes"
+                :key="note.message"
+                class="rounded px-1.5 py-0.5 text-[10px]"
+                :class="
+                  note.severity === 'error'
+                    ? 'bg-destructive/15 text-destructive'
+                    : 'bg-warn/15 text-warn'
+                "
+              >
+                {{ note.message }}
+              </span>
             </div>
             <button
-              class="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-warn"
-              :class="{ 'text-warn': variant.starred }"
-              @click="variant.starred = !variant.starred"
+              class="rounded p-1 text-muted-foreground transition-colors hover:bg-muted"
+              :class="{ 'text-warn': variant.is_starred }"
+              :title="variant.is_starred ? 'Unstar' : 'Star as A/B winner'"
+              @click="toggleStar(variant.id, variant.is_starred)"
             >
-              <Star :size="14" :fill="variant.starred ? 'currentColor' : 'none'" />
+              <Star :size="14" :fill="variant.is_starred ? 'currentColor' : 'none'" />
             </button>
           </header>
           <p class="whitespace-pre-wrap text-sm leading-relaxed">{{ variant.content }}</p>
@@ -186,15 +213,13 @@ async function runGraph() {
               {{ variant.content.length }} / {{ charLimit[activePlatform] }} chars
             </span>
             <div class="flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-              <button class="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-muted">
-                <Save :size="11" />
-                Save
-              </button>
               <button
                 class="inline-flex items-center gap-1 rounded bg-primary/15 px-2 py-1 font-medium text-primary hover:bg-primary/25"
+                disabled
+                title="Publishing not wired in MVP — star this variant to feed the learning loop"
               >
                 <Send :size="11" />
-                Publish
+                Publish (soon)
               </button>
             </div>
           </footer>
