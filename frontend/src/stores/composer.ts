@@ -112,9 +112,11 @@ export const useComposerStore = defineStore('composer', () => {
         if (exists) return
         events.value = [...events.value, payload].sort((a, b) => a.sequence - b.sequence)
 
+        // Both content_graph (finalize) and ab_variation_graph (ab_finalize)
+        // signal the end with a node_finished event whose name ends in finalize.
         if (
           payload.kind === 'node_finished' &&
-          payload.node_name === 'finalize'
+          (payload.node_name === 'finalize' || payload.node_name === 'ab_finalize')
         ) {
           void refreshCurrentPost()
         }
@@ -205,6 +207,21 @@ export const useComposerStore = defineStore('composer', () => {
     }
   }
 
+  async function refineVariant(variantId: string) {
+    if (!currentPost.value || generating.value) return
+    error.value = null
+    generating.value = true
+    try {
+      const { agent_run_id } = await variantsApi.refine(variantId)
+      currentRunId.value = agent_run_id
+      openStream(agent_run_id)
+    } catch (err) {
+      const e = err as { response?: { data?: unknown }; message?: string }
+      error.value = JSON.stringify(e.response?.data ?? e.message ?? err)
+      generating.value = false
+    }
+  }
+
   function _replaceVariant(updated: PostVariant) {
     if (!currentPost.value) return
     currentPost.value = {
@@ -244,6 +261,7 @@ export const useComposerStore = defineStore('composer', () => {
     runBrief,
     starVariant,
     unstarVariant,
+    refineVariant,
     uploadAndAttach,
     generateImage,
     detachImage,

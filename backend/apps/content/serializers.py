@@ -32,6 +32,7 @@ class PostVariantSerializer(serializers.ModelSerializer):
             "label",
             "content",
             "media",
+            "hook_strategy",
             "status",
             "is_starred",
             "allocation_weight",
@@ -39,7 +40,14 @@ class PostVariantSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "allocation_weight", "critic_notes", "created_at", "updated_at")
+        read_only_fields = (
+            "id",
+            "hook_strategy",
+            "allocation_weight",
+            "critic_notes",
+            "created_at",
+            "updated_at",
+        )
 
 
 class PostSerializer(serializers.ModelSerializer):

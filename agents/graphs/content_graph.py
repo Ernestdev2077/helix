@@ -1,15 +1,22 @@
 """Content generation graph — LangGraph state machine.
 
 Flow:
-    START → researcher → retriever → writer×2 per platform (A/B fan-out, parallel)
-          → critic → finalize → END
+    START -> researcher -> retriever -> writer x N (per platform, fan-out)
+          -> critic -> finalize -> END
 
-Each node publishes events via the Redis event bus so the UI can show a
-live timeline. LLM calls go through LiteLLM (``litellm.acompletion``) for
-provider routing — primarily OpenRouter.
+Each platform-writer fans out to ``VARIANTS_PER_PLATFORM`` LLM calls in
+sequence (sharing the same node, different hook strategies). Variants are
+then collected by the framework via ``Annotated[list, operator.add]`` on
+``state['variants']``.
 
-After ``finalize``, results are POSTed to Django via the internal callback
-endpoint to persist `PostVariant`s in DB.
+Generation auto-switches to **evolution framing** (hard-constraint phrasing
+of approved rules and winning patterns) as soon as the brand has both at
+least one approved rule and at least one winning pattern. This is invisible
+to the user except for an event in the timeline ("evolution mode active").
+
+The critic node validates platform constraints (length) and scans for the
+banned generic-AI phrases from the prompt library, attaching findings as
+``critic_notes`` per variant.
 """
 
 from __future__ import annotations
@@ -21,15 +28,21 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from ..event_bus import get_bus
-from ..prompts import system_prompts
-from ..tools.db import fetch_active_rules, fetch_brand, fetch_references
+from ..prompts import library
+from ..tools.db import (
+    fetch_active_rules,
+    fetch_brand,
+    fetch_brand_dna,
+    fetch_references,
+    fetch_winning_patterns,
+)
 from ..tools.django_api import report_content_completed
 from ..tools.llm import chat_complete
 from .state import ContentState, Platform, VariantDraft
 
 log = logging.getLogger(__name__)
 
-VARIANTS_PER_PLATFORM = 2  # A and B
+VARIANTS_PER_PLATFORM = 3  # one per hook strategy: curiosity, controversy, story
 _SEQUENCE_COUNTERS: dict[str, itertools.count] = {}
 
 
@@ -64,19 +77,19 @@ async def _emit(
 
 
 # ---------------------------------------------------------------------------
-# Researcher — load brand voice metadata
+# Researcher — load brand + voice + DNA aggregate
 # ---------------------------------------------------------------------------
 async def researcher_node(state: ContentState) -> dict[str, Any]:
     run_id = state["run_id"]
     brand_id = state.get("brand_id", "")
     await _emit(run_id, kind="node_started", node_name="researcher",
-                message="Loading brand voice...")
+                message="Loading brand voice and DNA...")
 
     brand = await fetch_brand(brand_id) if brand_id else None
     if not brand:
         await _emit(run_id, kind="node_finished", node_name="researcher",
                     message="No brand found — using defaults")
-        return {"kb_context": ""}
+        return {"kb_context": "", "brand_dna": {}}
 
     do_list = ", ".join(brand.get("voice_do") or []) or "(none)"
     dont_list = ", ".join(brand.get("voice_dont") or []) or "(none)"
@@ -88,13 +101,19 @@ async def researcher_node(state: ContentState) -> dict[str, Any]:
         f"Voice DO: {do_list}\n"
         f"Voice DON'T: {dont_list}"
     )
-    await _emit(run_id, kind="node_finished", node_name="researcher",
-                message=f"Loaded brand '{brand['name']}'")
-    return {"kb_context": kb}
+
+    dna = await fetch_brand_dna(workspace_id=state["workspace_id"], brand_id=brand_id)
+
+    await _emit(
+        run_id, kind="node_finished", node_name="researcher",
+        message=f"Loaded brand '{brand['name']}'"
+        + (f" + DNA from {dna.get('source_count', 0)} refs" if dna else ""),
+    )
+    return {"kb_context": kb, "brand_dna": dna or {}}
 
 
 # ---------------------------------------------------------------------------
-# Retriever — top references + active style rules per platform
+# Retriever — top references + active style rules + winning patterns
 # ---------------------------------------------------------------------------
 async def retriever_node(state: ContentState) -> dict[str, Any]:
     run_id = state["run_id"]
@@ -103,15 +122,16 @@ async def retriever_node(state: ContentState) -> dict[str, Any]:
     platforms = state.get("target_platforms", [])
 
     await _emit(run_id, kind="node_started", node_name="retriever",
-                message="Fetching references and style rules...")
+                message="Fetching references, rules, and winning patterns...")
 
     if not brand_id:
         await _emit(run_id, kind="node_finished", node_name="retriever",
                     message="No brand — skipping retrieval")
-        return {"retrieved_references": [], "active_style_rules": []}
+        return {"retrieved_references": [], "active_style_rules": [], "winning_patterns": []}
 
     refs: list[dict[str, Any]] = []
     rules: list[dict[str, Any]] = []
+    patterns: list[dict[str, Any]] = []
     for p in platforms:
         refs += await fetch_references(
             workspace_id=workspace_id, brand_id=brand_id, platform=p, limit=3
@@ -119,30 +139,48 @@ async def retriever_node(state: ContentState) -> dict[str, Any]:
         rules += await fetch_active_rules(
             workspace_id=workspace_id, brand_id=brand_id, platform=p
         )
+        patterns += await fetch_winning_patterns(
+            workspace_id=workspace_id, brand_id=brand_id, platform=p
+        )
 
-    seen_ref_ids: set[str] = set()
-    deduped_refs = []
-    for r in refs:
-        if r["id"] not in seen_ref_ids:
-            seen_ref_ids.add(r["id"])
-            deduped_refs.append(r)
-    seen_rule_ids: set[str] = set()
-    deduped_rules = []
-    for r in rules:
-        if r["id"] not in seen_rule_ids:
-            seen_rule_ids.add(r["id"])
-            deduped_rules.append(r)
+    deduped_refs = _dedupe_by_id(refs)
+    deduped_rules = _dedupe_by_id(rules)
+    deduped_patterns = _dedupe_by_id(patterns)
+
+    use_evolution = bool(deduped_rules) and bool(deduped_patterns)
 
     await _emit(
         run_id, kind="node_finished", node_name="retriever",
-        message=f"Loaded {len(deduped_refs)} refs + {len(deduped_rules)} active rules",
+        message=(
+            f"Loaded {len(deduped_refs)} refs, {len(deduped_rules)} rules, "
+            f"{len(deduped_patterns)} winning patterns"
+            + ("  [evolution mode]" if use_evolution else "")
+        ),
         data={
             "ref_count": len(deduped_refs),
             "rule_count": len(deduped_rules),
+            "pattern_count": len(deduped_patterns),
+            "evolution_mode": use_evolution,
             "rules_preview": [r["rule_text"][:80] for r in deduped_rules[:3]],
         },
     )
-    return {"retrieved_references": deduped_refs, "active_style_rules": deduped_rules}
+    return {
+        "retrieved_references": deduped_refs,
+        "active_style_rules": deduped_rules,
+        "winning_patterns": deduped_patterns,
+        "use_evolution_framing": use_evolution,
+    }
+
+
+def _dedupe_by_id(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    out = []
+    for x in items:
+        ident = x.get("id")
+        if ident and ident not in seen:
+            seen.add(ident)
+            out.append(x)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -151,36 +189,44 @@ async def retriever_node(state: ContentState) -> dict[str, Any]:
 def _make_writer_node(platform: Platform):
     async def writer_node(state: ContentState) -> dict[str, Any]:
         run_id = state["run_id"]
-        await _emit(run_id, kind="node_started", node_name=f"writer_{platform}",
-                    message=f"Drafting {VARIANTS_PER_PLATFORM} variants for {platform}...")
+        await _emit(
+            run_id,
+            kind="node_started",
+            node_name=f"writer_{platform}",
+            message=f"Drafting {VARIANTS_PER_PLATFORM} variants for {platform}...",
+        )
 
         variants_out: list[VariantDraft] = []
-        labels = ["A", "B", "C", "D"]
+        labels = ["A", "B", "C", "D", "E", "F"]
         total_in = total_out = 0
 
         for i in range(VARIANTS_PER_PLATFORM):
             label = labels[i]
-            system_prompt = system_prompts.writer_prompt(
+            system, hook_name = library.generation_prompt(
                 platform=platform,
+                variant_index=i,
                 kb_context=state.get("kb_context", ""),
                 references=state.get("retrieved_references", []),
                 style_rules=state.get("active_style_rules", []),
-                variant_label=label,
+                winning_patterns=state.get("winning_patterns", []),
+                brand_dna=state.get("brand_dna", {}),
+                use_evolution_framing=state.get("use_evolution_framing", False),
             )
-            user_prompt = system_prompts.writer_user_prompt(
+            user = library.generation_user_prompt(
                 brief=state["brief"],
                 goals=state.get("goals", []),
                 tone_hints=state.get("tone_hints", []),
             )
+
             try:
                 response = await chat_complete(
                     messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
                     ],
                     role="writer",
                     platform=platform,
-                    temperature=0.85 + i * 0.1,  # diversify variant B
+                    temperature=0.85 + i * 0.1,
                 )
                 content = response["content"]
                 tokens_in = response.get("tokens_in", 0)
@@ -190,12 +236,14 @@ def _make_writer_node(platform: Platform):
             except Exception as exc:  # noqa: BLE001
                 log.exception("Writer failed for %s/%s", platform, label)
                 content = f"[writer error: {exc}]"
+                tokens_in = tokens_out = 0
 
-            variants_out.append({
+            variant: VariantDraft = {
                 "platform": platform,
                 "label": label,
                 "content": content.strip(),
                 "critic_notes": [],
+                "hook_strategy": hook_name,
                 "inspired_by_reference_ids": [
                     r["id"] for r in state.get("retrieved_references", [])
                     if r.get("platform") in (platform, "")
@@ -203,19 +251,31 @@ def _make_writer_node(platform: Platform):
                 "inspired_by_rule_ids": [
                     r["id"] for r in state.get("active_style_rules", [])
                 ],
-            })
+            }
+            variants_out.append(variant)
+
             await _emit(
-                run_id, kind="stream_chunk", node_name=f"writer_{platform}",
-                message=f"Variant {label} ready ({len(content)} chars)",
-                data={"platform": platform, "label": label,
-                      "preview": content[:140]},
-                tokens_in=tokens_in, tokens_out=tokens_out,
+                run_id,
+                kind="stream_chunk",
+                node_name=f"writer_{platform}",
+                message=f"Variant {label} ({hook_name}) ready — {len(content)} chars",
+                data={
+                    "platform": platform,
+                    "label": label,
+                    "hook_strategy": hook_name,
+                    "preview": content[:140],
+                },
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
             )
 
         await _emit(
-            run_id, kind="node_finished", node_name=f"writer_{platform}",
+            run_id,
+            kind="node_finished",
+            node_name=f"writer_{platform}",
             message=f"Done — {len(variants_out)} variants",
-            tokens_in=total_in, tokens_out=total_out,
+            tokens_in=total_in,
+            tokens_out=total_out,
         )
         return {"variants": variants_out}
 
@@ -224,23 +284,24 @@ def _make_writer_node(platform: Platform):
 
 
 # ---------------------------------------------------------------------------
-# Critic — quality / platform-compliance check (rule-based, fast)
+# Critic — platform constraints + anti-AI phrase scan
 # ---------------------------------------------------------------------------
 async def critic_node(state: ContentState) -> dict[str, Any]:
     run_id = state["run_id"]
     await _emit(run_id, kind="node_started", node_name="critic",
-                message="Reviewing all variants...")
+                message="Reviewing variants for length and AI tone...")
 
     notes: list[dict[str, Any]] = []
     for v in state.get("variants", []):
         issues: list[dict[str, Any]] = []
         length = len(v["content"])
         platform = v["platform"]
+
         if platform == "x" and length > 280:
             issues.append({
                 "severity": "error",
                 "message": f"X post exceeds 280 chars ({length})",
-                "fix_suggestion": "Shorten or split into a thread",
+                "fix_suggestion": "Shorten or split into a numbered thread",
             })
         if platform == "linkedin" and length < 150:
             issues.append({
@@ -248,14 +309,17 @@ async def critic_node(state: ContentState) -> dict[str, Any]:
                 "message": "LinkedIn posts under 150 chars tend to underperform",
                 "fix_suggestion": "Add a concrete example or stat",
             })
-        buzz = ["synergy", "leverage", "unlock", "empower", "transform"]
-        found = [b for b in buzz if b in v["content"].lower()]
+
+        # Anti-AI phrase scan from the central library
+        found = library.detect_generic_phrases(v["content"])
         if found:
             issues.append({
                 "severity": "warn",
-                "message": f"Buzzwords detected: {', '.join(found)}",
-                "fix_suggestion": "Rephrase with concrete language",
+                "message": f"Generic AI phrases detected: {', '.join(found[:3])}"
+                           + ("…" if len(found) > 3 else ""),
+                "fix_suggestion": "Rewrite with concrete language; this kills authenticity",
             })
+
         v["critic_notes"] = issues
         notes.extend(
             [{"platform": platform, "label": v["label"], **i} for i in issues]
@@ -271,7 +335,7 @@ async def critic_node(state: ContentState) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Finalize — persist back to Django + emit summary event
+# Finalize — persist back to Django
 # ---------------------------------------------------------------------------
 async def finalize_node(state: ContentState) -> dict[str, Any]:
     run_id = state["run_id"]

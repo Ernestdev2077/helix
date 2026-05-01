@@ -15,6 +15,8 @@ class AgentRun(TimestampedModel):
 
     class Kind(models.TextChoices):
         CONTENT = "content", "Content generation"
+        AB_VARIATION = "ab_variation", "A/B refine — variations of a winner"
+        REFERENCE_DNA = "reference_dna", "Reference DNA extraction"
         CURATION = "curation", "Curator — style rules"
         ANALYSIS = "analysis", "Analyst — insights"
         EDIT = "edit", "Inline edit (Cmd+K)"

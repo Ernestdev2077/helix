@@ -61,7 +61,8 @@ async def fetch_references(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id::text, raw_text, platform, tags, likes_count, source_metrics
+            SELECT id::text, raw_text, platform, tags, likes_count,
+                   source_metrics, extracted_features
             FROM content_reference
             WHERE workspace_id = $1
               AND brand_id = $2
@@ -74,7 +75,7 @@ async def fetch_references(
             platform,
             limit,
         )
-        return [dict(r) for r in rows]
+        return [_parse_jsonb(dict(r)) for r in rows]
 
 
 async def fetch_active_rules(
@@ -128,7 +129,7 @@ async def fetch_all_references_for_brand(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id::text, platform, raw_text, tags, likes_count
+            SELECT id::text, platform, raw_text, tags, likes_count, extracted_features
             FROM content_reference
             WHERE workspace_id = $1 AND brand_id = $2
             ORDER BY created_at DESC
@@ -138,4 +139,171 @@ async def fetch_all_references_for_brand(
             brand_id,
             limit,
         )
+        return [_parse_jsonb(dict(r)) for r in rows]
+
+
+async def fetch_winning_patterns(
+    *, workspace_id: str, brand_id: str, platform: str
+) -> list[dict[str, Any]]:
+    """Patterns extracted from past A/B winners. Used by writer in evolution mode."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id::text, platform, pattern_text, metric, lift, sample_size
+            FROM content_winningpattern
+            WHERE workspace_id = $1
+              AND brand_id = $2
+              AND (platform = $3 OR platform = '')
+            ORDER BY lift DESC, created_at DESC
+            LIMIT 10
+            """,
+            workspace_id,
+            brand_id,
+            platform,
+        )
         return [dict(r) for r in rows]
+
+
+async def fetch_brand_dna(
+    *, workspace_id: str, brand_id: str
+) -> dict[str, Any]:
+    """Aggregate writing-DNA across recent references. Returns merged tone /
+    structure / hook_patterns or empty dict if there's not enough signal."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT extracted_features
+            FROM content_reference
+            WHERE workspace_id = $1 AND brand_id = $2
+              AND extracted_features IS NOT NULL
+              AND extracted_features::text != '{}'
+            ORDER BY created_at DESC
+            LIMIT 10
+            """,
+            workspace_id,
+            brand_id,
+        )
+        feats = []
+        for r in rows:
+            f = r["extracted_features"]
+            if isinstance(f, str):
+                import json as _json
+                try:
+                    f = _json.loads(f)
+                except Exception:  # noqa: BLE001
+                    f = {}
+            if isinstance(f, dict):
+                feats.append(f)
+        if not feats:
+            return {}
+
+        # Take the most recent populated values for each axis
+        def first_nonempty(key: str) -> str:
+            for f in feats:
+                v = f.get(key)
+                if v:
+                    return str(v)
+            return ""
+
+        return {
+            "tone": first_nonempty("tone"),
+            "structure": first_nonempty("structure"),
+            "hook_patterns": first_nonempty("hook_patterns"),
+            "source_count": len(feats),
+        }
+
+
+async def fetch_winner_cases(
+    *, workspace_id: str, brand_id: str, limit: int = 5
+) -> list[dict[str, Any]]:
+    """Posts where exactly one variant is starred AND there are unstarred siblings.
+    Returns: [{brief, winner: {...}, siblings: [...]}, ...]
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            WITH starred_posts AS (
+              SELECT DISTINCT p.id, p.brief, p.created_at
+              FROM content_post p
+              JOIN content_postvariant v ON v.post_id = p.id
+              WHERE p.workspace_id = $1 AND p.brand_id = $2 AND v.is_starred = true
+              ORDER BY p.created_at DESC
+              LIMIT $3
+            )
+            SELECT sp.id::text AS post_id, sp.brief,
+                   v.id::text AS variant_id, v.platform, v.content, v.is_starred, v.label
+            FROM starred_posts sp
+            JOIN content_postvariant v ON v.post_id = sp.id
+            ORDER BY sp.created_at DESC, v.label
+            """,
+            workspace_id,
+            brand_id,
+            limit,
+        )
+        cases: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            pid = r["post_id"]
+            if pid not in cases:
+                cases[pid] = {"brief": r["brief"], "winner": None, "siblings": []}
+            entry = {
+                "id": r["variant_id"],
+                "platform": r["platform"],
+                "content": r["content"],
+                "label": r["label"],
+            }
+            if r["is_starred"]:
+                cases[pid]["winner"] = entry
+            else:
+                cases[pid]["siblings"].append(entry)
+        return [c for c in cases.values() if c["winner"] is not None and c["siblings"]]
+
+
+async def fetch_variant_for_refine(
+    *, variant_id: str
+) -> dict[str, Any] | None:
+    """Load the content + brand context needed to A/B-refine one variant."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT v.id::text, v.platform, v.content, v.label,
+                   p.id::text AS post_id, p.workspace_id::text, p.brand_id::text
+            FROM content_postvariant v
+            JOIN content_post p ON p.id = v.post_id
+            WHERE v.id = $1
+            """,
+            variant_id,
+        )
+        return dict(row) if row else None
+
+
+async def fetch_max_variant_label(*, post_id: str) -> str:
+    """Return the highest-letter label currently on a post (e.g. 'C').
+    Useful so refine can start writing 'D', 'E', 'F'."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT MAX(label) AS max_label FROM content_postvariant WHERE post_id = $1",
+            post_id,
+        )
+        return (row["max_label"] if row else "") or "A"
+
+
+def _parse_jsonb(d: dict[str, Any]) -> dict[str, Any]:
+    """Some asyncpg rows return JSONB as str; normalize to dict."""
+    import json as _json
+
+    for key in ("extracted_features", "source_metrics"):
+        if key in d:
+            v = d[key]
+            if isinstance(v, str):
+                try:
+                    d[key] = _json.loads(v)
+                except Exception:  # noqa: BLE001
+                    d[key] = {}
+            elif v is None:
+                d[key] = {}
+    return d

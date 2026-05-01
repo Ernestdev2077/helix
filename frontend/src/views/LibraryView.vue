@@ -9,6 +9,7 @@ import {
   styleRulesApi,
   type Platform,
   type Reference,
+  type ReferenceDNA,
   type StyleRule,
 } from '@/api/resources'
 import { useComposerStore } from '@/stores/composer'
@@ -50,6 +51,20 @@ async function approveRule(id: string) {
 async function rejectRule(id: string) {
   const updated = await styleRulesApi.reject(id)
   rules.value = rules.value.map((r) => (r.id === id ? updated : r))
+}
+
+function hasDna(dna: ReferenceDNA | null | undefined): boolean {
+  if (!dna || typeof dna !== 'object') return false
+  return Boolean(dna.tone || dna.structure || dna.hook_patterns || (dna.style_rules?.length ?? 0))
+}
+
+async function reExtractDna(id: string) {
+  try {
+    await referencesApi.extractDna(id)
+    setTimeout(() => void load(), 6000)
+  } catch (err) {
+    console.warn('extractDna failed', err)
+  }
 }
 
 async function runCurator() {
@@ -202,7 +217,7 @@ onMounted(load)
         <article
           v-for="ref in filteredRefs"
           :key="ref.id"
-          class="rounded-lg border border-border bg-card p-4"
+          class="group rounded-lg border border-border bg-card p-4"
         >
           <div class="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
             <span class="rounded bg-muted px-1.5 py-0.5">{{ ref.platform }}</span>
@@ -217,6 +232,41 @@ onMounted(load)
             >
               #{{ t }}
             </span>
+          </div>
+
+          <!-- Reference DNA: extracted automatically by the agent -->
+          <div class="mt-3 border-t border-border pt-3 text-[11px]">
+            <div
+              v-if="!hasDna(ref.extracted_features)"
+              class="flex items-center gap-1.5 text-muted-foreground"
+            >
+              <Sparkles :size="11" class="animate-pulse" />
+              <span>Extracting DNA…</span>
+              <button
+                class="ml-auto opacity-0 transition-opacity hover:underline group-hover:opacity-100"
+                @click="reExtractDna(ref.id)"
+              >
+                retry
+              </button>
+            </div>
+            <div v-else class="space-y-1">
+              <div class="flex items-center gap-1.5 font-medium text-foreground">
+                <Sparkles :size="11" class="text-primary" />
+                <span>Writing DNA</span>
+              </div>
+              <p v-if="ref.extracted_features.tone" class="text-muted-foreground">
+                <span class="text-foreground/70">Tone:</span>
+                {{ ref.extracted_features.tone }}
+              </p>
+              <p v-if="ref.extracted_features.hook_patterns" class="text-muted-foreground">
+                <span class="text-foreground/70">Hook:</span>
+                {{ ref.extracted_features.hook_patterns }}
+              </p>
+              <p v-if="ref.extracted_features.structure" class="text-muted-foreground">
+                <span class="text-foreground/70">Structure:</span>
+                {{ ref.extracted_features.structure }}
+              </p>
+            </div>
           </div>
         </article>
       </div>

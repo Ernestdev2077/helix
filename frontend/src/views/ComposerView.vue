@@ -8,6 +8,7 @@ import {
   Sparkles,
   Star,
   Twitter,
+  Zap,
 } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
 
@@ -58,6 +59,10 @@ async function toggleStar(variantId: string, isStarred: boolean) {
   } else {
     await composer.starVariant(variantId)
   }
+}
+
+async function refine(variantId: string) {
+  await composer.refineVariant(variantId)
 }
 </script>
 
@@ -165,7 +170,7 @@ async function toggleStar(variantId: string, isStarred: boolean) {
         <p class="mt-1 text-sm text-muted-foreground">
           {{ composer.generating
             ? 'Watch the timeline on the right — drafts will appear here as they complete.'
-            : 'Describe what you want to post, hit ⌘↵, and the agents will draft variants A and B for each platform.' }}
+            : 'Describe what you want to post, hit ⌘↵. Agents will draft 3 variants per platform — each with a different hook strategy (curiosity / controversy / story).' }}
         </p>
       </div>
 
@@ -180,12 +185,18 @@ async function toggleStar(variantId: string, isStarred: boolean) {
               : 'border-border hover:border-primary/30'
           "
         >
-          <header class="mb-3 flex items-center justify-between">
-            <div class="flex items-center gap-2 text-xs">
+          <header class="mb-3 flex items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-2 text-xs">
               <span class="inline-flex h-5 w-5 items-center justify-center rounded bg-muted font-medium">
                 {{ variant.label }}
               </span>
-              <span class="text-muted-foreground">variant</span>
+              <span
+                v-if="variant.hook_strategy"
+                class="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary"
+                :title="`Hook strategy: ${variant.hook_strategy}`"
+              >
+                {{ variant.hook_strategy }}
+              </span>
               <span
                 v-for="note in variant.critic_notes"
                 :key="note.message"
@@ -195,18 +206,31 @@ async function toggleStar(variantId: string, isStarred: boolean) {
                     ? 'bg-destructive/15 text-destructive'
                     : 'bg-warn/15 text-warn'
                 "
+                :title="note.fix_suggestion ?? ''"
               >
                 {{ note.message }}
               </span>
             </div>
-            <button
-              class="rounded p-1 text-muted-foreground transition-colors hover:bg-muted"
-              :class="{ 'text-warn': variant.is_starred }"
-              :title="variant.is_starred ? 'Unstar' : 'Star as A/B winner'"
-              @click="toggleStar(variant.id, variant.is_starred)"
-            >
-              <Star :size="14" :fill="variant.is_starred ? 'currentColor' : 'none'" />
-            </button>
+            <div class="flex items-center gap-1">
+              <button
+                v-if="variant.is_starred"
+                :disabled="composer.generating"
+                class="inline-flex h-7 items-center gap-1 rounded-md bg-primary/15 px-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/25 disabled:opacity-50"
+                :title="composer.generating ? 'Already running…' : 'Generate 3 reframings of this winner'"
+                @click="refine(variant.id)"
+              >
+                <Zap :size="11" />
+                Refine
+              </button>
+              <button
+                class="rounded p-1 text-muted-foreground transition-colors hover:bg-muted"
+                :class="{ 'text-warn': variant.is_starred }"
+                :title="variant.is_starred ? 'Unstar' : 'Star as A/B winner'"
+                @click="toggleStar(variant.id, variant.is_starred)"
+              >
+                <Star :size="14" :fill="variant.is_starred ? 'currentColor' : 'none'" />
+              </button>
+            </div>
           </header>
           <p class="whitespace-pre-wrap text-sm leading-relaxed">{{ variant.content }}</p>
           <!-- Image dropzone temporarily hidden — focus is on text features.

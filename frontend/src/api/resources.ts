@@ -42,6 +42,7 @@ export interface PostVariant {
   platform: Platform
   label: string
   content: string
+  hook_strategy: string
   media: VariantMedia[]
   status: string
   is_starred: boolean
@@ -79,6 +80,14 @@ export interface Post {
   created_at: string
 }
 
+export interface ReferenceDNA {
+  tone?: string
+  structure?: string
+  hook_patterns?: string
+  style_rules?: string[]
+  key_phrases?: string[]
+}
+
 export interface Reference {
   id: string
   brand: string
@@ -88,7 +97,7 @@ export interface Reference {
   raw_text: string
   tags: string[]
   source_metrics: Record<string, unknown>
-  extracted_features: Record<string, unknown>
+  extracted_features: ReferenceDNA
   likes_count: number
   use_count: number
   created_at: string
@@ -153,6 +162,12 @@ export const variantsApi = {
     api.post<PostVariant>(`/content/variants/${id}/star/`).then((r) => r.data),
   unstar: (id: string) =>
     api.post<PostVariant>(`/content/variants/${id}/unstar/`).then((r) => r.data),
+  refine: (id: string) =>
+    api
+      .post<{ agent_run_id: string; post_id: string; source_variant_id: string }>(
+        `/content/variants/${id}/refine/`,
+      )
+      .then((r) => r.data),
   attachImage: (id: string, assetId: string) =>
     api
       .post<{ variant: PostVariant; asset: MediaAsset }>(
@@ -199,6 +214,12 @@ export const referencesApi = {
   create: (data: Partial<Reference>) =>
     api.post<Reference>('/content/references/', data).then((r) => r.data),
   remove: (id: string) => api.delete(`/content/references/${id}/`),
+  extractDna: (id: string) =>
+    api
+      .post<{ agent_run_id: string; reference_id: string }>(
+        `/content/references/${id}/extract-dna/`,
+      )
+      .then((r) => r.data),
 }
 
 export const styleRulesApi = {

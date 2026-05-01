@@ -32,8 +32,10 @@ from pydantic import BaseModel, Field
 
 from .config import get_settings
 from .event_bus import lifespan_bus
+from .graphs.ab_variation_graph import run_ab_variation_graph
 from .graphs.content_graph import run_content_graph
 from .graphs.curator_graph import run_curator_graph
+from .graphs.reference_dna_graph import run_reference_dna_graph
 from .tools.db import close_pool
 
 log = logging.getLogger(__name__)
@@ -42,7 +44,14 @@ log = logging.getLogger(__name__)
 class RunRequest(BaseModel):
     run_id: str
     workspace_id: str
-    graph: Literal["content", "curation", "analysis", "edit"] = "content"
+    graph: Literal[
+        "content",
+        "curation",
+        "ab_variation",
+        "reference_dna",
+        "analysis",
+        "edit",
+    ] = "content"
     input: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -105,6 +114,28 @@ async def create_run(
             "brand_id": req.input.get("brand_id", ""),
         }
         background.add_task(_safe_run, run_curator_graph, initial, "curation")
+        return RunResponse(run_id=req.run_id)
+
+    if req.graph == "ab_variation":
+        initial = {
+            "run_id": req.run_id,
+            "workspace_id": req.workspace_id,
+            "source_variant_id": req.input.get("source_variant_id", ""),
+            "variants": [],
+        }
+        background.add_task(_safe_run, run_ab_variation_graph, initial, "ab_variation")
+        return RunResponse(run_id=req.run_id)
+
+    if req.graph == "reference_dna":
+        initial = {
+            "run_id": req.run_id,
+            "workspace_id": req.workspace_id,
+            "brand_id": req.input.get("brand_id", ""),
+            "reference_id": req.input.get("reference_id", ""),
+            "reference_text": req.input.get("reference_text", ""),
+            "reference_platform": req.input.get("reference_platform", ""),
+        }
+        background.add_task(_safe_run, run_reference_dna_graph, initial, "reference_dna")
         return RunResponse(run_id=req.run_id)
 
     raise HTTPException(status_code=400, detail=f"graph '{req.graph}' not implemented yet")

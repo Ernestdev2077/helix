@@ -146,6 +146,12 @@ class PostVariant(TimestampedModel):
         default=list, blank=True, help_text="[{type: image|video|gif, url, alt}]"
     )
 
+    hook_strategy = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Which hook strategy was used: curiosity, controversy, story, ...",
+    )
+
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     is_starred = models.BooleanField(default=False, help_text="User-preferred variant")
 

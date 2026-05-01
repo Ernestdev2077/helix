@@ -1,12 +1,17 @@
-"""Curator graph — extracts declarative StyleRules from references + winners.
+"""Curator graph — extracts winning patterns + style rules from real outcomes.
 
-Run on demand (or nightly). Input: workspace_id, brand_id. Process:
-    1. Load all references for this brand
-    2. Load all starred PostVariants (proxies for A/B winners in MVP without real metrics)
-    3. Ask the LLM to extract 1-3 patterns with evidence
-    4. POST proposed StyleRules to Django
+Now operates in two modes side-by-side:
 
-Output: list of `proposed_rules` with confidence + evidence_reference_ids.
+  - Learning mode: when there are A/B winner-vs-siblings cases, ask the LLM
+    to compare and explain WHY one variant won. Output goes into both
+    WinningPattern (quantified) and StyleRule (declarative, requires user
+    approval).
+
+  - Reference mode (fallback): when there are not enough A/B cases yet,
+    extract patterns from liked References alone (the previous behavior).
+
+Both modes return the same JSON shape so the Django callback handles them
+uniformly. The user always sees proposed StyleRules in Library.
 """
 
 from __future__ import annotations
@@ -19,10 +24,13 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from ..event_bus import get_bus
+from ..prompts import library
 from ..tools.db import (
     fetch_all_references_for_brand,
     fetch_brand,
+    fetch_brand_dna,
     fetch_starred_variants,
+    fetch_winner_cases,
 )
 from ..tools.django_api import report_curation_completed
 from ..tools.llm import chat_complete
@@ -40,7 +48,11 @@ class CuratorState(TypedDict, total=False):
     brand: dict[str, Any]
     references: list[dict[str, Any]]
     winners: list[dict[str, Any]]
+    winner_cases: list[dict[str, Any]]
+    aggregated_dna: dict[str, Any]
+
     proposed_rules: list[dict[str, Any]]
+    winning_patterns: list[dict[str, Any]]
 
 
 async def _emit(run_id: str, **kwargs: Any) -> None:
@@ -49,13 +61,16 @@ async def _emit(run_id: str, **kwargs: Any) -> None:
     await bus.publish(run_id=run_id, sequence=next(counter), **kwargs)
 
 
+# ---------------------------------------------------------------------------
+# Load — refs + winners + winner-vs-siblings cases + DNA aggregate
+# ---------------------------------------------------------------------------
 async def load_node(state: CuratorState) -> dict[str, Any]:
     run_id = state["run_id"]
     workspace_id = state["workspace_id"]
     brand_id = state["brand_id"]
 
     await _emit(run_id, kind="node_started", node_name="curator_load",
-                message="Loading references and winning variants...")
+                message="Loading references, winners, A/B cases, DNA...")
 
     brand = await fetch_brand(brand_id) or {}
     references = await fetch_all_references_for_brand(
@@ -64,73 +79,31 @@ async def load_node(state: CuratorState) -> dict[str, Any]:
     winners = await fetch_starred_variants(
         workspace_id=workspace_id, brand_id=brand_id, limit=20
     )
+    cases = await fetch_winner_cases(
+        workspace_id=workspace_id, brand_id=brand_id, limit=5
+    )
+    dna = await fetch_brand_dna(workspace_id=workspace_id, brand_id=brand_id)
 
     await _emit(
-        run_id, kind="node_finished", node_name="curator_load",
-        message=f"Loaded {len(references)} refs + {len(winners)} winners",
+        run_id,
+        kind="node_finished",
+        node_name="curator_load",
+        message=(
+            f"{len(references)} refs, {len(winners)} winners, "
+            f"{len(cases)} A/B cases, DNA from {dna.get('source_count', 0)} refs"
+        ),
     )
-    return {"brand": brand, "references": references, "winners": winners}
-
-
-def _build_extract_prompt(state: CuratorState) -> tuple[str, str]:
-    brand = state.get("brand") or {}
-    refs = state.get("references", [])
-    winners = state.get("winners", [])
-
-    refs_block = "\n\n".join(
-        f"REF[{i+1}] (id={r['id']}, platform={r['platform']}, likes={r.get('likes_count', 0)}):\n{r['raw_text'][:500]}"
-        for i, r in enumerate(refs[:15])
-    ) or "(no references yet)"
-
-    winners_block = "\n\n".join(
-        f"WIN[{i+1}] (variant_id={w['id']}, platform={w['platform']}):\n{w['content'][:500]}"
-        for i, w in enumerate(winners[:10])
-    ) or "(no winners yet)"
-
-    system = """You are a content strategist analyzing what makes social media posts successful for one brand.
-
-Your task: extract 1 to 3 short, ACTIONABLE style rules from the references and winners below.
-
-Each rule must:
-- Be 5-15 words, imperative ("Open with a concrete number", "Avoid corporate buzzwords")
-- Be DIFFERENT from already-known generic best practices — find brand-specific or platform-specific patterns
-- Be supported by AT LEAST 2 examples (refs or winners)
-- Have a confidence score 0.0-1.0 (raise it the more evidence supports it)
-
-Output STRICT JSON:
-{
-  "rules": [
-    {
-      "rule_text": "string, 5-15 words, imperative",
-      "rationale": "1-2 sentences: which specific examples support this",
-      "scope": "global" | "platform",
-      "platform": "" | "x" | "reddit" | "linkedin",
-      "confidence": 0.0-1.0,
-      "evidence_reference_ids": ["uuid", ...]
+    return {
+        "brand": brand,
+        "references": references,
+        "winners": winners,
+        "winner_cases": cases,
+        "aggregated_dna": dna,
     }
-  ]
-}
-
-If there are not enough examples to extract any meaningful rule yet, return {"rules": []}."""
-
-    user = f"""BRAND: {brand.get('name', '?')}
-DESCRIPTION: {brand.get('description', '')}
-EXISTING VOICE DO: {brand.get('voice_do') or []}
-EXISTING VOICE DON'T: {brand.get('voice_dont') or []}
-
-LIKED REFERENCES (the team explicitly liked these):
-{refs_block}
-
-WINNING VARIANTS (the team starred these as best A/B picks):
-{winners_block}
-
-Now extract style rules as JSON."""
-    return system, user
 
 
 def _parse_json_loose(text: str) -> dict[str, Any]:
-    """LLMs sometimes wrap JSON in fences or add prose. Try to extract."""
-    text = text.strip()
+    text = (text or "").strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[-1]
         if text.endswith("```"):
@@ -145,44 +118,55 @@ def _parse_json_loose(text: str) -> dict[str, Any]:
                 return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
                 pass
-    return {"rules": []}
+    return {}
 
 
+# ---------------------------------------------------------------------------
+# Extract — single LLM call covering both learning + reference modes
+# ---------------------------------------------------------------------------
 async def extract_node(state: CuratorState) -> dict[str, Any]:
     run_id = state["run_id"]
     refs = state.get("references", [])
-    winners = state.get("winners", [])
+    cases = state.get("winner_cases", [])
+    brand = state.get("brand", {})
 
-    if len(refs) + len(winners) < 2:
+    if len(refs) + len(cases) < 1:
         await _emit(
             run_id, kind="node_finished", node_name="curator_extract",
-            message="Not enough data yet — need at least 2 examples",
+            message="Not enough data yet (need ≥1 reference or A/B case)",
         )
-        return {"proposed_rules": []}
+        return {"proposed_rules": [], "winning_patterns": []}
 
     await _emit(run_id, kind="node_started", node_name="curator_extract",
-                message="Extracting style patterns...")
+                message=f"Analyzing {len(cases)} A/B cases + {len(refs)} refs...")
 
-    system, user = _build_extract_prompt(state)
     response = await chat_complete(
         messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
+            {"role": "system", "content": library.learning_prompt()},
+            {"role": "user", "content": library.learning_user(
+                brand=brand,
+                winner_cases=cases,
+                references=refs,
+            )},
         ],
         role="curator",
         temperature=0.2,
-        max_tokens=1500,
+        max_tokens=2000,
     )
-    parsed = _parse_json_loose(response["content"])
-    raw_rules = parsed.get("rules", [])
+    parsed = _parse_json_loose(response.get("content", ""))
 
     valid_ref_ids = {r["id"] for r in refs}
-    cleaned: list[dict[str, Any]] = []
-    for r in raw_rules[:5]:
+    valid_winner_ids = set()
+    for c in cases:
+        if c.get("winner"):
+            valid_winner_ids.add(c["winner"]["id"])
+
+    cleaned_rules: list[dict[str, Any]] = []
+    for r in (parsed.get("proposed_rules") or [])[:5]:
         if not isinstance(r, dict) or not r.get("rule_text"):
             continue
         evidence_ids = [eid for eid in r.get("evidence_reference_ids", []) if eid in valid_ref_ids]
-        cleaned.append({
+        cleaned_rules.append({
             "rule_text": str(r["rule_text"])[:400],
             "rationale": str(r.get("rationale", ""))[:1000],
             "scope": r.get("scope", "global"),
@@ -191,35 +175,66 @@ async def extract_node(state: CuratorState) -> dict[str, Any]:
             "evidence_reference_ids": evidence_ids,
         })
 
+    cleaned_patterns: list[dict[str, Any]] = []
+    for p in (parsed.get("winning_patterns") or [])[:5]:
+        if not isinstance(p, dict) or not p.get("pattern_text"):
+            continue
+        evidence_ids = [vid for vid in p.get("evidence_winner_ids", []) if vid in valid_winner_ids]
+        try:
+            lift = float(p.get("lift", 0.2))
+        except (ValueError, TypeError):
+            lift = 0.2
+        try:
+            sample_size = int(p.get("sample_size", len(cases)))
+        except (ValueError, TypeError):
+            sample_size = len(cases)
+        cleaned_patterns.append({
+            "pattern_text": str(p["pattern_text"])[:400],
+            "platform": p.get("platform", ""),
+            "metric": str(p.get("metric", "engagement_rate"))[:40],
+            "lift": lift,
+            "sample_size": sample_size,
+            "evidence_variant_ids": evidence_ids,
+        })
+
     await _emit(
         run_id, kind="node_finished", node_name="curator_extract",
-        message=f"Proposed {len(cleaned)} rule(s)",
-        data={"rules_preview": [r["rule_text"] for r in cleaned]},
+        message=f"Extracted {len(cleaned_rules)} rule(s) + {len(cleaned_patterns)} pattern(s)",
+        data={
+            "rules_preview": [r["rule_text"] for r in cleaned_rules],
+            "patterns_preview": [p["pattern_text"] for p in cleaned_patterns],
+        },
         tokens_in=response.get("tokens_in", 0),
         tokens_out=response.get("tokens_out", 0),
     )
-    return {"proposed_rules": cleaned}
+    return {"proposed_rules": cleaned_rules, "winning_patterns": cleaned_patterns}
 
 
+# ---------------------------------------------------------------------------
+# Persist — single Django callback, both rules and patterns
+# ---------------------------------------------------------------------------
 async def persist_node(state: CuratorState) -> dict[str, Any]:
     run_id = state["run_id"]
     rules = state.get("proposed_rules", [])
+    patterns = state.get("winning_patterns", [])
 
-    if rules:
+    if rules or patterns:
         await report_curation_completed({
             "run_id": run_id,
             "workspace_id": state["workspace_id"],
             "brand_id": state["brand_id"],
             "proposed_rules": rules,
+            "winning_patterns": patterns,
+            "aggregated_dna": state.get("aggregated_dna") or {},
         })
         await _emit(
             run_id, kind="info", node_name="curator_persist",
-            message=f"Persisted {len(rules)} proposed rule(s)",
+            message=f"Persisted {len(rules)} rule(s) + {len(patterns)} pattern(s)",
         )
     else:
         await _emit(
             run_id, kind="info", node_name="curator_persist",
-            message="No rules to persist",
+            message="Nothing to persist",
         )
     return {}
 

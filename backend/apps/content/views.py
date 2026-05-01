@@ -117,6 +117,23 @@ class PostVariantViewSet(viewsets.ModelViewSet):
         variant.save(update_fields=["is_starred", "updated_at"])
         return Response(PostVariantSerializer(variant).data)
 
+    @action(detail=True, methods=["post"])
+    def refine(self, request, id=None):  # noqa: A002,ARG002
+        """A/B refine — generate N reframings with different psych triggers.
+
+        Returns an agent_run_id; the SPA subscribes via WebSocket and the new
+        variants are appended to the same post (labels continue past the max).
+        """
+        variant = self.get_object()
+        from apps.agent_runs.services import start_ab_variation
+
+        run = start_ab_variation(variant=variant, user=request.user)
+        return Response({
+            "agent_run_id": str(run.id),
+            "post_id": str(variant.post_id),
+            "source_variant_id": str(variant.id),
+        })
+
     @action(detail=True, methods=["post"], url_path="attach-image")
     def attach_image(self, request, id=None):  # noqa: A002,ARG002
         """Attach an existing MediaAsset (uploaded earlier) to this variant."""
@@ -217,10 +234,34 @@ class ReferenceViewSet(_WorkspaceScopedViewSet):
     serializer_class = ReferenceSerializer
 
     def perform_create(self, serializer) -> None:
-        serializer.save(
+        reference = serializer.save(
             workspace=self.request.workspace,
             added_by=self.request.user,
         )
+        # Fire DNA extraction in the background. If the agent service is
+        # unavailable, the reference still saves successfully.
+        try:
+            from apps.agent_runs.services import start_reference_dna
+
+            start_reference_dna(reference=reference, user=self.request.user)
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Reference DNA auto-trigger failed for %s", reference.id, exc_info=True
+            )
+
+    @action(detail=True, methods=["post"], url_path="extract-dna")
+    def extract_dna(self, request, id=None):  # noqa: A002,ARG002
+        """Manually re-trigger DNA extraction for an existing Reference."""
+        reference = self.get_object()
+        from apps.agent_runs.services import start_reference_dna
+
+        run = start_reference_dna(reference=reference, user=request.user)
+        return Response({
+            "agent_run_id": str(run.id),
+            "reference_id": str(reference.id),
+        })
 
 
 class StyleRuleViewSet(_WorkspaceScopedViewSet):
