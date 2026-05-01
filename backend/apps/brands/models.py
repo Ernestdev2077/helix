@@ -53,6 +53,21 @@ class Brand(TimestampedModel):
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.name} [{self.workspace.slug}]"
 
+    def save(self, *args, **kwargs) -> None:
+        if not self.slug:
+            from django.utils.text import slugify
+
+            base = slugify(self.name) or "brand"
+            slug = base
+            counter = 1
+            qs = Brand.objects.filter(workspace=self.workspace_id, slug=slug).exclude(pk=self.pk)
+            while qs.exists():
+                counter += 1
+                slug = f"{base}-{counter}"
+                qs = Brand.objects.filter(workspace=self.workspace_id, slug=slug).exclude(pk=self.pk)
+            self.slug = slug
+        super().save(*args, **kwargs)
+
 
 class KBDocument(TimestampedModel):
     """A single document in a brand's knowledge base.

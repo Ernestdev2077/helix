@@ -6,6 +6,8 @@ from .models import Brand, KBDocument
 
 
 class BrandSerializer(serializers.ModelSerializer):
+    slug = serializers.SlugField(required=False, allow_blank=True, max_length=60)
+
     class Meta:
         model = Brand
         fields = (
