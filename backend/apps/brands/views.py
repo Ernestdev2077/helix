@@ -44,3 +44,46 @@ class KBDocumentViewSet(viewsets.ModelViewSet):
         if workspace is None:
             return KBDocument.objects.none()
         return KBDocument.objects.filter(brand__workspace=workspace)
+
+    def perform_create(self, serializer: KBDocumentSerializer) -> None:
+        from apps.brands.services import ingest_document
+
+        doc = serializer.save()
+        try:
+            ingest_document(doc)
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "KB ingest failed for doc %s", doc.id, exc_info=True
+            )
+
+    @action(detail=False, methods=["post"], url_path="paste")
+    def paste(self, request):
+        """Convenience for the onboarding wizard: create a doc from raw text and
+        ingest it in one round-trip."""
+        from apps.brands.models import KBDocument
+        from apps.brands.services import ingest_document
+
+        brand_id = request.data.get("brand")
+        title = request.data.get("title", "").strip() or "Pasted note"
+        raw_text = request.data.get("raw_text", "").strip()
+        if not brand_id or not raw_text:
+            return Response({"error": "brand and raw_text required"}, status=400)
+        if not Brand.objects.filter(id=brand_id, workspace=request.workspace).exists():
+            return Response({"error": "brand not found"}, status=404)
+
+        doc = KBDocument.objects.create(
+            brand_id=brand_id,
+            title=title[:240],
+            source_type=KBDocument.SourceType.PASTE,
+            raw_text=raw_text,
+        )
+        try:
+            chunk_count = ingest_document(doc)
+        except Exception as exc:  # noqa: BLE001
+            return Response({"error": "ingest_failed", "message": str(exc)}, status=502)
+        return Response({
+            **KBDocumentSerializer(doc).data,
+            "chunk_count": chunk_count,
+        })

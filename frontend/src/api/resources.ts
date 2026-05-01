@@ -185,6 +185,45 @@ export const variantsApi = {
       .then((r) => r.data),
 }
 
+export interface PlatformOAuthStatus {
+  configured: boolean
+  connected: boolean
+  handle: string
+  display_name: string
+}
+
+export interface OAuthStatus {
+  x: PlatformOAuthStatus
+  reddit: PlatformOAuthStatus
+  linkedin: PlatformOAuthStatus
+}
+
+export const oauthApi = {
+  status: () => api.get<OAuthStatus>('/publishing/oauth-status/').then((r) => r.data),
+}
+
+export interface KBDocument {
+  id: string
+  brand: string
+  title: string
+  source_type: string
+  source_uri: string
+  status: string
+  error_message: string
+  token_count: number
+  created_at: string
+  chunk_count?: number
+}
+
+export const kbDocumentsApi = {
+  list: (params?: { brand?: string }) =>
+    api
+      .get<Paginated<KBDocument>>('/brands/documents/', { params })
+      .then((r) => unwrapList(r.data)),
+  paste: (data: { brand: string; title: string; raw_text: string }) =>
+    api.post<KBDocument>('/brands/documents/paste/', data).then((r) => r.data),
+}
+
 export const mediaApi = {
   upload: (file: File, brandId?: string, altText?: string) => {
     const fd = new FormData()

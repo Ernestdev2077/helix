@@ -15,7 +15,11 @@ import logging
 import os
 from typing import Any, Literal
 
+import httpx
+
 log = logging.getLogger(__name__)
+
+EMBEDDING_DIM = 1536
 
 Platform = Literal["x", "reddit", "linkedin"]
 Role = Literal["writer", "critic", "curator", "analyst"]
@@ -103,3 +107,50 @@ async def chat_complete(
     except Exception as exc:  # noqa: BLE001
         log.exception("LiteLLM call failed for %s, falling back to stub: %s", use_model, exc)
         return _stub_content(platform=platform, messages=messages)
+
+
+# ---------------------------------------------------------------------------
+# Embeddings — used by retriever for KB-chunk similarity search
+# ---------------------------------------------------------------------------
+async def embed(texts: list[str]) -> list[list[float]]:
+    """Embed a batch of strings. Picks OpenRouter or OpenAI depending on which
+    key is configured. Returns a list of EMBEDDING_DIM-vectors. Falls back to
+    stub vectors if no key is set so the graph still runs."""
+    if not texts:
+        return []
+    if os.getenv("OPENROUTER_API_KEY"):
+        url = "https://openrouter.ai/api/v1/embeddings"
+        headers = {
+            "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/Ernestdev2077/helix",
+            "X-Title": "helix",
+        }
+        model = "openai/text-embedding-3-small"
+    elif os.getenv("OPENAI_API_KEY"):
+        url = "https://api.openai.com/v1/embeddings"
+        headers = {
+            "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+            "Content-Type": "application/json",
+        }
+        model = "text-embedding-3-small"
+    else:
+        log.warning("No embedding key configured — returning stub vectors")
+        return [_stub_vector(t) for t in texts]
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(url, headers=headers, json={"model": model, "input": texts})
+            r.raise_for_status()
+            data = r.json()
+        return [item["embedding"] for item in data.get("data", [])]
+    except Exception as exc:  # noqa: BLE001
+        log.exception("embed() failed, returning stubs: %s", exc)
+        return [_stub_vector(t) for t in texts]
+
+
+def _stub_vector(text: str) -> list[float]:
+    import hashlib
+
+    h = hashlib.sha256(text.encode()).digest()
+    return [(h[i % len(h)] - 128) / 128.0 for i in range(EMBEDDING_DIM)]

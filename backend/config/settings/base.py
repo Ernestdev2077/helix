@@ -274,6 +274,9 @@ LINKEDIN_CLIENT_ID = env("LINKEDIN_CLIENT_ID", default="")
 LINKEDIN_CLIENT_SECRET = env("LINKEDIN_CLIENT_SECRET", default="")
 LINKEDIN_REDIRECT_URI = env("LINKEDIN_REDIRECT_URI", default="")
 
+# Where the SPA lives — used for OAuth callback redirects back to /onboarding etc.
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
+
 
 # ---------------------------------------------------------------------------
 # I18N / TZ

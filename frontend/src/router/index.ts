@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -101,5 +102,27 @@ router.beforeEach(async (to) => {
   if ((to.name === 'login' || to.name === 'signup') && auth.isAuthenticated) {
     return { name: 'composer' }
   }
+
+  // Auto-redirect to /onboarding if user is signed in but has no workspace yet.
+  // We skip this check when already on onboarding/auth routes to avoid loops.
+  if (
+    to.meta.requiresAuth &&
+    auth.isAuthenticated &&
+    to.name !== 'onboarding' &&
+    !String(to.path).startsWith('/auth')
+  ) {
+    const workspaces = useWorkspaceStore()
+    if (workspaces.workspaces.length === 0) {
+      try {
+        await workspaces.load()
+      } catch {
+        // ignore — backend may be down; let the page render and surface its own error
+      }
+    }
+    if (workspaces.workspaces.length === 0) {
+      return { name: 'onboarding' }
+    }
+  }
+
   return true
 })

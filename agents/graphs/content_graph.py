@@ -34,10 +34,11 @@ from ..tools.db import (
     fetch_brand,
     fetch_brand_dna,
     fetch_references,
+    fetch_top_kb_chunks,
     fetch_winning_patterns,
 )
 from ..tools.django_api import report_content_completed
-from ..tools.llm import chat_complete
+from ..tools.llm import chat_complete, embed
 from .state import ContentState, Platform, VariantDraft
 
 log = logging.getLogger(__name__)
@@ -82,8 +83,11 @@ async def _emit(
 async def researcher_node(state: ContentState) -> dict[str, Any]:
     run_id = state["run_id"]
     brand_id = state.get("brand_id", "")
+    workspace_id = state["workspace_id"]
+    brief = state.get("brief", "")
+
     await _emit(run_id, kind="node_started", node_name="researcher",
-                message="Loading brand voice and DNA...")
+                message="Loading brand voice, DNA, and relevant KB chunks...")
 
     brand = await fetch_brand(brand_id) if brand_id else None
     if not brand:
@@ -93,23 +97,47 @@ async def researcher_node(state: ContentState) -> dict[str, Any]:
 
     do_list = ", ".join(brand.get("voice_do") or []) or "(none)"
     dont_list = ", ".join(brand.get("voice_dont") or []) or "(none)"
-    kb = (
-        f"Brand: {brand['name']}\n"
-        f"Description: {brand.get('description') or '(none)'}\n"
-        f"Audience: {brand.get('target_audience') or '(general)'}\n"
-        f"Voice description: {brand.get('voice_description') or '(default)'}\n"
-        f"Voice DO: {do_list}\n"
-        f"Voice DON'T: {dont_list}"
-    )
+    kb_parts = [
+        f"Brand: {brand['name']}",
+        f"Description: {brand.get('description') or '(none)'}",
+        f"Audience: {brand.get('target_audience') or '(general)'}",
+        f"Voice description: {brand.get('voice_description') or '(default)'}",
+        f"Voice DO: {do_list}",
+        f"Voice DON'T: {dont_list}",
+    ]
 
-    dna = await fetch_brand_dna(workspace_id=state["workspace_id"], brand_id=brand_id)
+    # KB retrieval — embed brief, look up top-3 chunks across this brand's docs.
+    kb_chunks: list[dict[str, Any]] = []
+    if brief.strip():
+        try:
+            [query_vec] = await embed([brief[:1000]])
+            kb_chunks = await fetch_top_kb_chunks(
+                workspace_id=workspace_id, brand_id=brand_id,
+                query_embedding=query_vec, k=3,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("KB retrieval failed: %s", exc)
+            kb_chunks = []
+    if kb_chunks:
+        kb_parts.append("")
+        kb_parts.append("BRAND KNOWLEDGE (top relevant chunks from your docs):")
+        for c in kb_chunks:
+            title = c.get("document_title") or "doc"
+            kb_parts.append(f"--- from {title!r} ---")
+            kb_parts.append(c.get("text", "")[:600])
+
+    dna = await fetch_brand_dna(workspace_id=workspace_id, brand_id=brand_id)
 
     await _emit(
         run_id, kind="node_finished", node_name="researcher",
-        message=f"Loaded brand '{brand['name']}'"
-        + (f" + DNA from {dna.get('source_count', 0)} refs" if dna else ""),
+        message=(
+            f"Loaded '{brand['name']}'"
+            + (f" + {len(kb_chunks)} KB chunks" if kb_chunks else "")
+            + (f" + DNA from {dna.get('source_count', 0)} refs" if dna else "")
+        ),
+        data={"kb_chunk_count": len(kb_chunks)},
     )
-    return {"kb_context": kb, "brand_dna": dna or {}}
+    return {"kb_context": "\n".join(kb_parts), "brand_dna": dna or {}}
 
 
 # ---------------------------------------------------------------------------

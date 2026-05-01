@@ -165,6 +165,40 @@ async def fetch_winning_patterns(
         return [dict(r) for r in rows]
 
 
+async def fetch_top_kb_chunks(
+    *, workspace_id: str, brand_id: str, query_embedding: list[float], k: int = 3
+) -> list[dict[str, Any]]:
+    """Cosine-similarity search over KBChunks for one brand. Returns top-k.
+
+    Uses pgvector's `<=>` operator (cosine distance). The vector is sent as a
+    bracket-string which pgvector parses; asyncpg has no native vector codec.
+    """
+    if not query_embedding:
+        return []
+    vec_literal = "[" + ",".join(f"{x:.6f}" for x in query_embedding) + "]"
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT c.id::text, c.text, c.position,
+                   d.title AS document_title,
+                   c.embedding <=> $3::vector AS distance
+            FROM brands_kbchunk c
+            JOIN brands_kbdocument d ON d.id = c.document_id
+            WHERE c.brand_id = $1 AND d.brand_id IN (
+                SELECT id FROM brands_brand WHERE workspace_id = $2
+            )
+            ORDER BY c.embedding <=> $3::vector
+            LIMIT $4
+            """,
+            brand_id,
+            workspace_id,
+            vec_literal,
+            k,
+        )
+        return [dict(r) for r in rows]
+
+
 async def fetch_brand_dna(
     *, workspace_id: str, brand_id: str
 ) -> dict[str, Any]:
