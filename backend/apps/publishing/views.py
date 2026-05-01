@@ -24,17 +24,27 @@ log = logging.getLogger(__name__)
 
 
 class PlatformAccountViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only list of connected accounts. Creation happens via OAuth flow."""
+    """List + delete connected accounts. Creation happens only via OAuth flow."""
 
     serializer_class = PlatformAccountSerializer
     permission_classes = [IsWorkspaceEditor]
     lookup_field = "id"
+    http_method_names = ["get", "delete", "head", "options"]
 
     def get_queryset(self):
         workspace = getattr(self.request, "workspace", None)
         if workspace is None:
             return PlatformAccount.objects.none()
         return PlatformAccount.objects.filter(workspace=workspace)
+
+    def destroy(self, request, *args, **kwargs):
+        """Disconnect by destroying the PlatformAccount row. The OAuth tokens are
+        wiped along with it; user can reconnect via the wizard or settings."""
+        from rest_framework import status as drf_status
+
+        instance = self.get_object()
+        instance.delete()
+        return Response(status=drf_status.HTTP_204_NO_CONTENT)
 
 
 class PublicationViewSet(viewsets.ModelViewSet):

@@ -137,6 +137,9 @@ export const workspacesApi = {
   list: () => api.get<Paginated<Workspace>>('/workspaces/').then((r) => unwrapList(r.data)),
   create: (data: { name: string }) =>
     api.post<Workspace>('/workspaces/', data).then((r) => r.data),
+  update: (id: string, data: Partial<Workspace>) =>
+    api.patch<Workspace>(`/workspaces/${id}/`, data).then((r) => r.data),
+  remove: (id: string) => api.delete(`/workspaces/${id}/`),
 }
 
 export const brandsApi = {
@@ -202,6 +205,27 @@ export const oauthApi = {
   status: () => api.get<OAuthStatus>('/publishing/oauth-status/').then((r) => r.data),
 }
 
+export interface PlatformAccount {
+  id: string
+  brand: string | null
+  platform: Platform
+  external_id: string
+  handle: string
+  display_name: string
+  avatar_url: string
+  status: string
+  scopes: string[]
+  created_at: string
+}
+
+export const platformAccountsApi = {
+  list: () =>
+    api
+      .get<Paginated<PlatformAccount>>('/publishing/accounts/')
+      .then((r) => unwrapList(r.data)),
+  disconnect: (id: string) => api.delete(`/publishing/accounts/${id}/`),
+}
+
 export interface KBDocument {
   id: string
   brand: string
@@ -222,6 +246,7 @@ export const kbDocumentsApi = {
       .then((r) => unwrapList(r.data)),
   paste: (data: { brand: string; title: string; raw_text: string }) =>
     api.post<KBDocument>('/brands/documents/paste/', data).then((r) => r.data),
+  remove: (id: string) => api.delete(`/brands/documents/${id}/`),
 }
 
 export const mediaApi = {

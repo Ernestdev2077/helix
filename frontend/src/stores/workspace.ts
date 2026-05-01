@@ -38,6 +38,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return ws
   }
 
+  async function update(id: string, data: Partial<Workspace>) {
+    const updated = await workspacesApi.update(id, data)
+    workspaces.value = workspaces.value.map((w) => (w.id === id ? updated : w))
+    return updated
+  }
+
   return {
     workspaces,
     activeWorkspaceId,
@@ -46,5 +52,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     load,
     setActive,
     create,
+    update,
   }
 })
